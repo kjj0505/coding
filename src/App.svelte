@@ -132,7 +132,7 @@
   }
   
   .setting{
-
+    display: flex;
   }
 </style>
 
