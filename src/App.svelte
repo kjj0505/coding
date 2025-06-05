@@ -6,6 +6,12 @@
   // 줄의 음과 프렛 번호로 전체 음 이름을 구하는 함수
   let tuningNotes = ["E4", "B3", "G3", "D3", "A2", "E2"];
 
+  let tab = Array(6).fill().map(() => Array(230).fill(""));
+
+  let currentTabPos = 0;
+
+  let isMuted = false;
+
   function getNoteFromString(stringNote, fret) {
     const baseNote = stringNote.slice(0, -1);
     const baseOctave = parseInt(stringNote.slice(-1));
@@ -17,15 +23,46 @@
   }
 
   function play(note) {
-    Tone.start();
-    const synth = new Tone.Synth().toDestination();
-    synth.triggerAttackRelease(note, '8n');
+  if (isMuted) return; // 소리 꺼졌으면 재생 안 함
+  Tone.start();
+  const synth = new Tone.Synth().toDestination();
+  synth.triggerAttackRelease(note, '8n');
+}
+
+  // 악보 초기화
+function resetTab() {
+  tab = Array(6).fill().map(() => Array(230).fill(""));
+  currentTabPos = 0;
+}
+
+// 순서대로 소리 재생
+async function playTab() {
+  for (let col = 0; col < 230; col++) {
+    for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
+      const fret = tab[stringIndex][col];
+      if (fret !== "" && !isNaN(fret)) {
+        const stringNote = tuningNotes[5 - stringIndex];
+        const note = getNoteFromString(stringNote, parseInt(fret));
+        play(note);
+      }
+    }
+    await Tone.start(); // 사용자 인터랙션 대응
+    await new Promise((res) => setTimeout(res, 300)); // 템포: 300ms 간격
   }
+}
+
+  
 
   function handleFretClick(stringIndex, fretIndex) {
-  const stringNote = tuningNotes[5 - stringIndex]; // ← 고음줄을 위에 배치한 것처럼 처리
+  const stringNote = tuningNotes[5 - stringIndex];
   const note = getNoteFromString(stringNote, fretIndex);
   play(note);
+
+  if (tab[stringIndex]) {
+    tab[stringIndex][currentTabPos] = fretIndex.toString();
+  }
+
+  currentTabPos += 4; // 다음 칸으로 이동
 }
 
 
@@ -55,7 +92,7 @@
     { string: 6, fret: 0 },
   ];
 
-  let tab = Array(5).fill().map(() => Array(230).fill("")); 
+  
 </script>
 
 <style>
@@ -181,23 +218,25 @@
   <div class="top-bar">
     <button>guitar site</button>
     <div>
-      <button>reset</button>
-      <button>play</button>
+      <div>
+        <button on:click={resetTab}>reset</button>
+        <button on:click={playTab}>play</button>
+      </div>
     </div>
   </div>
 
   <div class="tab-display">
     {#each tab as line, i}
-    <div class="tab-line" style="margin-bottom: {i === 4 ? '1rem' : '0'}">
-      {@html line.map(n => n || '-').join('')}
-    </div>
-  {/each}
+  <div class="tab-line" style="margin-bottom: {(i + 1) % 6 === 0 && i !== tab.length - 1 ? '1rem' : '0'}">
+    {@html line.map(n => n || '-').join('')}
+  </div>
+{/each}
 
     {#each tab as line, i}
-    <div class="tab-line" style="margin-bottom: {i === 4 ? '1rem' : '0'}">
-      {@html line.map(n => n || '-').join('')}
-    </div>
-  {/each}
+  <div class="tab-line" style="margin-bottom: {(i + 1) % 6 === 0 && i !== tab.length - 1 ? '1rem' : '0'}">
+    {@html line.map(n => n || '-').join('')}
+  </div>
+{/each}
   </div>
 
   <div class="controls">
@@ -246,7 +285,7 @@
     </div>  
 
     <div>
-      <button style="border-radius: 50%;">&#128264;</button>
+      <button style="border-radius: 50%;"  on:click={() => isMuted = !isMuted}>{isMuted ? '🔇' : '🔊'}</button>
     </div>
   </div>
 
