@@ -3,6 +3,8 @@
 
   const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
+  const columnsPerBlock = 64;
+  
   // 줄의 음과 프렛 번호로 전체 음 이름을 구하는 함수
   let tuningNotes = ["E4", "B3", "G3", "D3", "A2", "E2"];
 
@@ -93,6 +95,14 @@ async function playTab() {
   ];
 
   
+
+  function formatFret(n) {
+    if (n === "") return "----";
+    const s = n.toString();
+    if (s.length === 1) return `--${s}-`;
+    if (s.length === 2) return `-${s}-`;
+    return s; // 3자리 이상 그대로
+  }
 </script>
 
 <style>
@@ -123,8 +133,9 @@ async function playTab() {
     font-family: monospace;
     overflow-y: hidden; 
     height: 25vh;
-    white-space: pre;
     margin: 0 auto;
+    white-space: pre;
+    
   }
 
   .controls {
@@ -212,6 +223,16 @@ async function playTab() {
   .setting{
     position: relative;
   }
+  
+  .click-zone {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 30%; /* 밑부분만 클릭 가능 */
+  background: transparent;
+  cursor: pointer;
+}
 </style>
 
 <div class="container">
@@ -226,7 +247,7 @@ async function playTab() {
   </div>
 
   <div class="tab-display">
-    {#each tab as line, i}
+    {#each tab as line, i}  
   <div class="tab-line" style="margin-bottom: {(i + 1) % 6 === 0 && i !== tab.length - 1 ? '1rem' : '0'}">
     {@html line.map(n => n || '-').join('')}
   </div>
@@ -260,13 +281,15 @@ async function playTab() {
     <div class="fretboard">
   {#each Array(6) as _, stringIndex}
     {#each Array(16) as _, fretIndex}
-      <div class="fret" on:click={() => handleFretClick(stringIndex, fretIndex)}>
-        {#if [2, 4, 6, 8, 14].includes(fretIndex) && stringIndex === 2}
-          <div class="dot"></div>
-        {:else if fretIndex === 11 && (stringIndex === 1 || stringIndex === 3)}
-          <div class="dot"></div>
-        {/if}
-      </div>
+      <div class="fret">
+  <div class="click-zone" on:click={() => handleFretClick(stringIndex, fretIndex)}></div>
+
+  {#if [2, 4, 6, 8, 14].includes(fretIndex) && stringIndex === 2}
+    <div class="dot"></div>
+  {:else if fretIndex === 11 && (stringIndex === 1 || stringIndex === 3)}
+    <div class="dot"></div>
+  {/if}
+</div>
     {/each}
   {/each}
 </div>
@@ -282,7 +305,7 @@ async function playTab() {
         <button>electric guitar</button>
       </div>
     {/if}
-    </div>  
+    </div>
 
     <div>
       <button style="border-radius: 50%;"  on:click={() => isMuted = !isMuted}>{isMuted ? '🔇' : '🔊'}</button>
