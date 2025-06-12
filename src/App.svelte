@@ -1,14 +1,33 @@
 <script>
   import * as Tone from 'tone';
+  import { writable, get } from 'svelte/store';
 
   const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
   let tuningNotes = ["E4", "B3", "G3", "D3", "A2", "E2"];
   let tuning = ["E", "B", "G", "D", "A", "E"];
+  let selectedTuning = "standard";
+  let selectedGuitar = "acoustic";
 
-  let tab = Array(6).fill().map(() => Array(230).fill(""));
+  let tab = Array(6).fill().map(() => Array(230).fill("")); 
   let currentTabPos = 0;
   let isMuted = false;
+  const isPlaying = writable(false);
+
+  function setGuitar(type) {
+    selectedGuitar = type;
+  }
+
+  function setTuning(mode) {
+    selectedTuning = mode;
+    if (mode === "standard") {
+      tuningNotes = ["E4", "B3", "G3", "D3", "A2", "E2"];
+      tuning = ["E", "B", "G", "D", "A", "E"];
+    } else if (mode === "drop d") {
+      tuningNotes = ["D4", "A3", "D3", "G3", "D2", "E2"];
+      tuning = ["D", "A", "D", "G", "D", "E"];
+    }
+  }
 
   function getNoteFromString(stringNote, fret) {
     const baseNote = stringNote.slice(0, -1);
@@ -33,28 +52,43 @@
   }
 
   async function playTab() {
-    for (let col = 0; col < 230; col++) {
-      for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
-        const fret = tab[stringIndex][col];
-        if (fret !== "" && !isNaN(fret)) {
-          const stringNote = tuningNotes[5 - stringIndex];
-          const note = getNoteFromString(stringNote, parseInt(fret));
-          play(note);
+    if (get(isPlaying)) return;
+
+    isPlaying.set(true);
+
+    try {
+      for (let col = 0; col < 230; col++) {
+        if (!get(isPlaying)) break;
+
+        for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
+          const fret = tab[stringIndex][col];
+          if (fret !== "" && !isNaN(fret)) {
+            const stringNote = tuningNotes[5 - stringIndex];
+            const note = getNoteFromString(stringNote, parseInt(fret));
+            play(note);
+          }
         }
+
+        await Tone.start();
+        await new Promise(res => setTimeout(res, 300));
       }
-      await Tone.start();
-      await new Promise((res) => setTimeout(res, 300));
+    } finally {
+      isPlaying.set(false);
     }
   }
 
+  function pauseTab() {
+    isPlaying.set(false);
+  }
+
   function handleFretClick(stringIndex, fretIndex) {
-    if (stringIndex === 6) return; // 마지막 7번째 줄은 무시
+    if (stringIndex === 6) return;
 
     const stringNote = tuningNotes[5 - stringIndex];
     const note = getNoteFromString(stringNote, fretIndex);
     play(note);
     if (tab[stringIndex]) {
-      tab[stringIndex][currentTabPos] = fretIndex.toString();
+      tab[stringIndex][currentTabPos] = (fretIndex + 1).toString();
     }
     currentTabPos += 2;
   }
@@ -71,68 +105,37 @@
   }
 
   function formatFret(n) {
-  if (n === "") return "----";       // 빈 칸은 4자
-  const s = n.toString();
-  if (s.length === 1) return `--${s}-`;  // ex: 3 → --3-
-  if (s.length === 2) return `-${s}-`;   // ex: 12 → -12-
-  return s.slice(0, 4);                 // safety
-}
+    if (n === "") return "----";
+    const s = n.toString();
+    if (s.length === 1) return `--${s}-`;
+    if (s.length === 2) return `-${s}-`;
+    return s.slice(0, 4);
+  }
 </script>
 
 <style>
-  .container { 
-    height: 100%;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    background: white;
-    margin: 0;
-    padding: 0;
-    font-family: sans-serif;
-    box-sizing: border-box; 
+  .container {
+    height: 100%; width: 100%; display: flex; flex-direction: column;
+    background: white; margin: 0; padding: 0; font-family: sans-serif; box-sizing: border-box;
   }
-  .top-bar { 
-    display: flex;
-    justify-content: space-between;
-    padding: 1rem;
-  }
+  .top-bar { display: flex; justify-content: space-between; padding: 1rem; }
   .tab-display {
-    background: #ccc;
-    padding: 1rem;
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 14px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    height: 22vh;
-    margin: 0 auto;
-    white-space: pre;
-    letter-spacing: 0;
-    line-height: 1.4;
-    box-sizing: border-box;
-    max-width: 100%;
+    background: #ccc; padding: 1rem; font-family: 'Courier New', Courier, monospace;
+    font-size: 14px; overflow-x: auto; overflow-y: hidden; height: 22vh; margin: 0 auto;
+    white-space: pre; letter-spacing: 0; line-height: 1.4; box-sizing: border-box; max-width: 100%;
   }
-  .tab-line { 
-    font-family: inherit;
-  }
-  .controls { 
-    display: flex;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    align-items: center;
-  }
+  .tab-line { font-family: inherit; }
+  .controls { display: flex; gap: 0.5rem; padding: 0.5rem 1rem; align-items: center; }
   .fretboard-wrapper {
-    flex: 1;
-    display: flex;
-    overflow: auto;
-    align-items: stretch;
-    min-height: 0;
+    flex: 1; display: flex; overflow: auto; align-items: stretch; min-height: 0;
   }
   .string-labels {
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
-    padding: 0.5rem;
-    margin: 2px;
+    justify-content: center; /* 줄 사이 간격 줄임 */
+    padding: 0.1rem;
+    margin: 0;
+    gap: 24px; /* 줄 간격 직접 지정 */
   }
   .string-label {
     background: red;
@@ -143,60 +146,34 @@
     font-weight: bold;
     display: grid;
     grid-template-rows: repeat(1, 1fr);
+    margin-right: 5px;
   }
-  .tunerset {
-    display: flex;
-  }
-  .tunerset > button {
-    margin: 8px;
-  }
-  .fretboard { 
-    flex: 1;
-    display: grid;
-    grid-template-columns: repeat(16, 1fr);
-    grid-template-rows: repeat(7, 1fr);
-    gap: 3px;
-    background: #999;
-    height: 350px;
+  .tunerset { display: flex; }
+  .tunerset > button { margin: 8px; }
+  .tunerset > button.selected { background-color: #666; color: white; font-weight: bold; }
+  .fretboard {
+    flex: 1; display: grid; grid-template-columns: repeat(16, 1fr);
+    grid-template-rows: repeat(7, 1fr); gap: 3px; background: #999; height: 350px;
   }
   .fret {
-    position: relative;
-    background: #ccc;
-    border: 1px solid #aaa;
+    position: relative; background: #ccc; border: 1px solid #aaa;
   }
   .dot {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 20px;
-    height: 16px;
-    background: black;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
+    position: absolute; top: 50%; left: 50%; width: 20px; height: 16px;
+    background: black; border-radius: 50%; transform: translate(-50%, -50%);
   }
   .click-zone {
-    position: absolute;
-    bottom: -10px;
-    left: 0;
-    width: 100%;
-    height: 40%;
-    background: transparent;
-    cursor: pointer;
+    position: absolute; bottom: -10px; left: 0; width: 100%; height: 40%;
+    background: transparent; cursor: pointer;
   }
   button {
-    padding: 0.5rem 1rem;
-    border: none;
-    border-radius: 10px;
-    background: #ddd;
-    font-size: 1rem;
+    padding: 0.5rem 1rem; border: none; border-radius: 10px; background: #ddd; font-size: 1rem;
   }
-  .footer {
-    display: flex;
-    justify-content: space-between;
+  button:disabled {
+    opacity: 0.5; cursor: not-allowed;
   }
-  .setting {
-    position: relative; 
-  }
+  .footer { display: flex; justify-content: space-between; }
+  .setting { position: relative; }
 </style>
 
 <div class="container">
@@ -204,7 +181,8 @@
     <button>guitar site</button>
     <div>
       <button on:click={resetTab}>reset</button>
-      <button on:click={playTab}>play</button>
+      <button on:click={pauseTab}>pause</button>
+      <button on:click={playTab} disabled={$isPlaying}>play</button>
     </div>
   </div>
 
@@ -220,8 +198,8 @@
     <button on:click={toggleTuner} class="setting">tuner</button>
     {#if showTuningOptions}
       <div class="tunerset">
-        <button>standard</button>
-        <button>drop d</button>
+        <button class:selected={selectedTuning === "standard"} on:click={() => setTuning("standard")}>standard</button>
+        <button class:selected={selectedTuning === "drop d"} on:click={() => setTuning("drop d")}>drop d</button>
       </div>
     {/if}
   </div>
@@ -254,11 +232,11 @@
     <div class="controls">
       <button on:click={toggleTuner2} class="setting">guitar</button>
       {#if showTuningOptions2}
-        <div class="tunerset">
-          <button>acoustic guitar</button>
-          <button>electric guitar</button>
-        </div>
-      {/if}
+  <div class="tunerset">
+    <button class:selected={selectedGuitar === 'acoustic'} on:click={() => setGuitar('acoustic')}>acoustic guitar</button>
+    <button class:selected={selectedGuitar === 'electric'} on:click={() => setGuitar('electric')}>electric guitar</button>
+  </div>
+{/if}
     </div>
     <div>
       <button style="border-radius: 50%;" on:click={() => isMuted = !isMuted}>{isMuted ? '🔇' : '🔊'}</button>
