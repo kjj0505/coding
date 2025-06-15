@@ -52,30 +52,32 @@
   }
 
   async function playTab() {
-    if (get(isPlaying)) return;
+  const alreadyPlaying = get(isPlaying);
+  if (alreadyPlaying) return;
 
-    isPlaying.set(true);
+  isPlaying.set(true);
+  await Tone.start();
 
-    try {
-      for (let col = 0; col < 230; col++) {
-        if (!get(isPlaying)) break;
+  try {
+    for (let col = 0; col < 230; col++) {
+      if (!get(isPlaying)) break;
 
-        for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
-          const fret = tab[stringIndex][col];
-          if (fret !== "" && !isNaN(fret)) {
-            const stringNote = tuningNotes[5 - stringIndex];
-            const note = getNoteFromString(stringNote, parseInt(fret));
-            play(note);
-          }
+      for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
+        const fret = tab[stringIndex][col];
+        if (fret !== "" && !isNaN(fret)) {
+          const stringNote = tuningNotes[5 - stringIndex];
+          const note = getNoteFromString(stringNote, parseInt(fret));
+          play(note);
         }
-
-        await Tone.start();
-        await new Promise(res => setTimeout(res, 300));
       }
-    } finally {
-      isPlaying.set(false);
-    }
+
+      await new Promise(res => setTimeout(res, 300));
+    } 
+  } finally {
+    // 🔁 연주가 종료되었거나 중단되었을 때 무조건 실행
+    isPlaying.set(false);
   }
+}
 
   function pauseTab() {
     isPlaying.set(false);
@@ -174,6 +176,20 @@
   }
   .footer { display: flex; justify-content: space-between; }
   .setting { position: relative; }
+  .tab-table {
+    border-collapse: collapse;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    table-layout: fixed;
+    width: 100%;
+  }
+  .tab-table td {
+    padding: 0;
+    margin: 0;
+    text-align: center;
+    white-space: nowrap;
+    width: 24px;
+  }
 </style>
 
 <div class="container">
@@ -187,12 +203,19 @@
   </div>
 
   <div class="tab-display">
-    {#each tab as line, i}  
-      <div class="tab-line">
-        {@html line.map(n => formatFret(n)).join('')}
-      </div>
-    {/each}
-  </div>
+  <table class="tab-table">
+    <tbody>
+      {#each tab as line}
+        <tr>
+          {#each line as fret}
+            <td>{@html formatFret(fret)}</td>
+          {/each}
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+    
+</div>
 
   <div class="controls">
     <button on:click={toggleTuner} class="setting">tuner</button>
