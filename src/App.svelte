@@ -51,33 +51,43 @@
     currentTabPos = 0;
   }
 
-  async function playTab() {
-  const alreadyPlaying = get(isPlaying);
-  if (alreadyPlaying) return;
-
-  isPlaying.set(true);
-  await Tone.start();
-
-  try {
-    for (let col = 0; col < 230; col++) {
-      if (!get(isPlaying)) break;
-
-      for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
-        const fret = tab[stringIndex][col];
-        if (fret !== "" && !isNaN(fret)) {
-          const stringNote = tuningNotes[5 - stringIndex];
-          const note = getNoteFromString(stringNote, parseInt(fret));
-          play(note);
-        }
+  function getLastActiveColumn() {
+    for (let col = 229; col >= 0; col--) {
+      for (let i = 0; i < 6; i++) {
+        if (tab[i][col] !== "") return col;
       }
-
-      await new Promise(res => setTimeout(res, 300));
-    } 
-  } finally {
-    // 🔁 연주가 종료되었거나 중단되었을 때 무조건 실행
-    isPlaying.set(false);
+    }
+    return -1;
   }
-}
+
+  async function playTab() {
+    if (get(isPlaying)) return;
+
+    const lastCol = getLastActiveColumn();
+    if (lastCol === -1) return;
+
+    isPlaying.set(true);
+    await Tone.start();
+
+    try {
+      for (let col = 0; col <= lastCol; col++) {
+        if (!get(isPlaying)) break;
+
+        for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
+          const fret = tab[stringIndex][col];
+          if (fret !== "" && !isNaN(fret)) {
+            const stringNote = tuningNotes[5 - stringIndex];
+            const note = getNoteFromString(stringNote, parseInt(fret));
+            play(note);
+          }
+        }
+
+        await new Promise(res => setTimeout(res, 300));
+      } 
+    } finally {
+      isPlaying.set(false);
+    }
+  }
 
   function pauseTab() {
     isPlaying.set(false);
@@ -107,11 +117,11 @@
   }
 
   function formatFret(n) {
-    if (n === "") return "----";
-    const s = n.toString();
-    if (s.length === 1) return `--${s}-`;
-    if (s.length === 2) return `-${s}-`;
-    return s.slice(0, 4);
+    return n === "" ? "" : n.toString();
+  }
+
+  function hasAnyNotes() {
+    return tab.some(row => row.some(cell => cell !== ""));
   }
 </script>
 
@@ -189,7 +199,23 @@
     text-align: center;
     white-space: nowrap;
     width: 24px;
+
+    position: relative;
+    z-index: 1;
+    height: 20px;
   }
+
+  .tab-table td::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 1px;
+  width: 100%;
+  background-color: black;
+  transform: translateY(-50%);
+  z-index: 0;
+}
 </style>
 
 <div class="container">
@@ -197,8 +223,8 @@
     <button>guitar site</button>
     <div>
       <button on:click={resetTab}>reset</button>
-      <button on:click={pauseTab}>pause</button>
-      <button on:click={playTab} disabled={$isPlaying}>play</button>
+      <button on:click={pauseTab} disabled={!$isPlaying}>pause</button>
+      <button on:click={playTab} disabled={$isPlaying || !hasAnyNotes()}>play</button>
     </div>
   </div>
 
