@@ -136,7 +136,6 @@
     font-size: 14px; overflow-x: auto; overflow-y: hidden; height: 22vh; margin: 0 auto;
     white-space: pre; letter-spacing: 0; line-height: 1.4; box-sizing: border-box; max-width: 100%;
   }
-  .tab-line { font-family: inherit; }
   .controls { display: flex; gap: 0.5rem; padding: 0.5rem 1rem; align-items: center; }
   .fretboard-wrapper {
     flex: 1; display: flex; overflow: auto; align-items: stretch; min-height: 0;
@@ -144,10 +143,10 @@
   .string-labels {
     display: flex;
     flex-direction: column;
-    justify-content: center; /* 줄 사이 간격 줄임 */
+    justify-content: center;
     padding: 0.1rem;
     margin: 0;
-    gap: 24px; /* 줄 간격 직접 지정 */
+    gap: 24px;
   }
   .string-label {
     background: red;
@@ -199,23 +198,24 @@
     text-align: center;
     white-space: nowrap;
     width: 24px;
-
     position: relative;
     z-index: 1;
     height: 20px;
   }
-
   .tab-table td::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 0;
-  height: 1px;
-  width: 100%;
-  background-color: black;
-  transform: translateY(-50%);
-  z-index: 0;
-}
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    height: 1px;
+    width: 100%;
+    background-color: black;
+    transform: translateY(-50%);
+    z-index: 0;
+  }
+  .tab-table td:not(:empty)::after {
+    display: none;
+  }
 </style>
 
 <div class="container">
@@ -229,19 +229,18 @@
   </div>
 
   <div class="tab-display">
-  <table class="tab-table">
-    <tbody>
-      {#each tab as line}
-        <tr>
-          {#each line as fret}
-            <td>{@html formatFret(fret)}</td>
-          {/each}
-        </tr>
-      {/each}
-    </tbody>
-  </table>
-    
-</div>
+    <table class="tab-table">
+      <tbody>
+        {#each tab as line}
+          <tr>
+            {#each line as fret}
+              <td>{@html formatFret(fret)}</td>
+            {/each}
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
 
   <div class="controls">
     <button on:click={toggleTuner} class="setting">tuner</button>
@@ -281,11 +280,11 @@
     <div class="controls">
       <button on:click={toggleTuner2} class="setting">guitar</button>
       {#if showTuningOptions2}
-  <div class="tunerset">
-    <button class:selected={selectedGuitar === 'acoustic'} on:click={() => setGuitar('acoustic')}>acoustic guitar</button>
-    <button class:selected={selectedGuitar === 'electric'} on:click={() => setGuitar('electric')}>electric guitar</button>
-  </div>
-{/if}
+        <div class="tunerset">
+          <button class:selected={selectedGuitar === 'acoustic'} on:click={() => setGuitar('acoustic')}>acoustic guitar</button>
+          <button class:selected={selectedGuitar === 'electric'} on:click={() => setGuitar('electric')}>electric guitar</button>
+        </div>
+      {/if}
     </div>
     <div>
       <button style="border-radius: 50%;" on:click={() => isMuted = !isMuted}>{isMuted ? '🔇' : '🔊'}</button>
