@@ -1,6 +1,7 @@
 <script>
   import * as Tone from 'tone';
   import { writable, get } from 'svelte/store';
+  import { tick } from 'svelte';
 
   const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -9,10 +10,12 @@
   let selectedTuning = "standard";
   let selectedGuitar = "acoustic";
 
-  let tab = Array(6).fill().map(() => Array(230).fill("")); 
+  let tab = Array(6).fill().map(() => Array(100).fill(""));
   let currentTabPos = 0;
   let isMuted = false;
   const isPlaying = writable(false);
+
+  let tabContainer; // for scroll reset and autoscroll
 
   function setGuitar(type) {
     selectedGuitar = type;
@@ -47,12 +50,13 @@
   }
 
   function resetTab() {
-    tab = Array(6).fill().map(() => Array(230).fill(""));
+    tab = Array(6).fill().map(() => Array(100).fill(""));
     currentTabPos = 0;
+    if (tabContainer) tabContainer.scrollLeft = 0;
   }
 
   function getLastActiveColumn() {
-    for (let col = 229; col >= 0; col--) {
+    for (let col = tab[0].length - 1; col >= 0; col--) {
       for (let i = 0; i < 6; i++) {
         if (tab[i][col] !== "") return col;
       }
@@ -83,7 +87,7 @@
         }
 
         await new Promise(res => setTimeout(res, 300));
-      } 
+      }
     } finally {
       isPlaying.set(false);
     }
@@ -93,8 +97,14 @@
     isPlaying.set(false);
   }
 
-  function handleFretClick(stringIndex, fretIndex) {
+  async function handleFretClick(stringIndex, fretIndex) {
     if (stringIndex === 6) return;
+
+    if (currentTabPos + 1 >= tab[0].length) {
+      tab = tab.map(row => [...row, "", ""]);
+      await tick();
+      if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
+    }
 
     const stringNote = tuningNotes[5 - stringIndex];
     const note = getNoteFromString(stringNote, fretIndex);
@@ -125,21 +135,54 @@
   }
 </script>
 
+
 <style>
   .container {
-    height: 100%; width: 100%; display: flex; flex-direction: column;
-    background: white; margin: 0; padding: 0; font-family: sans-serif; box-sizing: border-box;
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    background: white;
+    margin: 0;
+    padding: 0;
+    font-family: sans-serif;
   }
-  .top-bar { display: flex; justify-content: space-between; padding: 1rem; }
+
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    padding: 1rem;
+  }
+
   .tab-display {
-    background: #ccc; padding: 1rem; font-family: 'Courier New', Courier, monospace;
-    font-size: 14px; overflow-x: auto; overflow-y: hidden; height: 22vh; margin: 0 auto;
-    white-space: pre; letter-spacing: 0; line-height: 1.4; box-sizing: border-box; max-width: 100%;
+    background: #ccc;
+    padding: 1rem;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: 22vh;
+    margin: 0 auto;
+    white-space: pre;
+    box-sizing: border-box;
+    max-width: 100%;
   }
-  .controls { display: flex; gap: 0.5rem; padding: 0.5rem 1rem; align-items: center; }
+
+  .controls {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    align-items: center;
+  }
+
   .fretboard-wrapper {
-    flex: 1; display: flex; overflow: auto; align-items: stretch; min-height: 0;
+    flex: 1;
+    display: flex;
+    overflow: auto;
+    align-items: stretch;
+    min-height: 0;
   }
+
   .string-labels {
     display: flex;
     flex-direction: column;
@@ -148,6 +191,7 @@
     margin: 0;
     gap: 24px;
   }
+
   .string-label {
     background: red;
     color: white;
@@ -155,53 +199,96 @@
     border-radius: 4px;
     text-align: center;
     font-weight: bold;
-    display: grid;
-    grid-template-rows: repeat(1, 1fr);
     margin-right: 5px;
   }
-  .tunerset { display: flex; }
-  .tunerset > button { margin: 8px; }
-  .tunerset > button.selected { background-color: #666; color: white; font-weight: bold; }
+
+  .tunerset {
+    display: flex;
+  }
+
+  .tunerset > button {
+    margin: 8px;
+  }
+
+  .tunerset > button.selected {
+    background-color: #666;
+    color: white;
+    font-weight: bold;
+  }
+
   .fretboard {
-    flex: 1; display: grid; grid-template-columns: repeat(16, 1fr);
-    grid-template-rows: repeat(7, 1fr); gap: 3px; background: #999; height: 350px;
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(16, 1fr);
+    grid-template-rows: repeat(7, 1fr);
+    gap: 3px;
+    background: #999;
+    height: 350px;
   }
+
   .fret {
-    position: relative; background: #ccc; border: 1px solid #aaa;
+    position: relative;
+    background: #ccc;
+    border: 1px solid #aaa;
   }
+
   .dot {
-    position: absolute; top: 50%; left: 50%; width: 20px; height: 16px;
-    background: black; border-radius: 50%; transform: translate(-50%, -50%);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 16px;
+    background: black;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
   }
+
   .click-zone {
-    position: absolute; bottom: -10px; left: 0; width: 100%; height: 40%;
-    background: transparent; cursor: pointer;
+    position: absolute;
+    bottom: -10px;
+    left: 0;
+    width: 100%;
+    height: 40%;
+    background: transparent;
+    cursor: pointer;
   }
+
   button {
-    padding: 0.5rem 1rem; border: none; border-radius: 10px; background: #ddd; font-size: 1rem;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 10px;
+    background: #ddd;
   }
+
   button:disabled {
-    opacity: 0.5; cursor: not-allowed;
+    opacity: 0.5;
+    cursor: not-allowed;
   }
-  .footer { display: flex; justify-content: space-between; }
-  .setting { position: relative; }
+
+  .footer {
+    display: flex;
+    justify-content: space-between;
+  }
+
   .tab-table {
     border-collapse: collapse;
     font-family: 'Courier New', monospace;
     font-size: 14px;
-    table-layout: fixed;
-    width: 100%;
+    table-layout: auto;
+    width: max-content;
   }
+
   .tab-table td {
     padding: 0;
     margin: 0;
     text-align: center;
     white-space: nowrap;
-    width: 24px;
+    min-width: 24px;
+    height: 20px;
     position: relative;
     z-index: 1;
-    height: 20px;
   }
+
   .tab-table td::after {
     content: "";
     position: absolute;
@@ -213,6 +300,7 @@
     transform: translateY(-50%);
     z-index: 0;
   }
+
   .tab-table td:not(:empty)::after {
     display: none;
   }
@@ -228,7 +316,7 @@
     </div>
   </div>
 
-  <div class="tab-display">
+  <div class="tab-display" bind:this={tabContainer}>
     <table class="tab-table">
       <tbody>
         {#each tab as line}
@@ -287,7 +375,9 @@
       {/if}
     </div>
     <div>
-      <button style="border-radius: 50%;" on:click={() => isMuted = !isMuted}>{isMuted ? '🔇' : '🔊'}</button>
+      <button style="border-radius: 50%;" on:click={() => isMuted = !isMuted}>
+        {isMuted ? '🔇' : '🔊'}
+      </button>
     </div>
   </div>
 </div>
