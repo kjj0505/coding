@@ -10,12 +10,23 @@
   let selectedTuning = "standard";
   let selectedGuitar = "acoustic";
 
-  let tab = Array(6).fill().map(() => Array(100).fill(""));
+  let tab = Array(6).fill().map(() => Array(60).fill(""));
   let currentTabPos = 0;
   let isMuted = false;
   const isPlaying = writable(false);
 
-  let tabContainer; // for scroll reset and autoscroll
+  let tabContainer;
+
+  let timeSignature = "4/4";
+
+  // 박자 편집용 상태
+  // 편집 중 여부
+  let editingTimeTop = false;
+  let editingTimeBottom = false;
+
+  // 임시 입력값
+  let timeTopInput = timeSignature.split('/')[0];
+  let timeBottomInput = timeSignature.split('/')[1];
 
   function setGuitar(type) {
     selectedGuitar = type;
@@ -50,7 +61,7 @@
   }
 
   function resetTab() {
-    tab = Array(6).fill().map(() => Array(100).fill(""));
+    tab = Array(6).fill().map(() => Array(60).fill(""));
     currentTabPos = 0;
     if (tabContainer) tabContainer.scrollLeft = 0;
   }
@@ -73,6 +84,12 @@
     isPlaying.set(true);
     await Tone.start();
 
+    let delayMs = 300;
+    if (timeSignature === "3/4") delayMs = 400;
+    else if (timeSignature === "6/8") delayMs = 200;
+    else if (timeSignature === "2/4") delayMs = 350;
+    else if (timeSignature === "5/4") delayMs = 300;
+
     try {
       for (let col = 0; col <= lastCol; col++) {
         if (!get(isPlaying)) break;
@@ -86,7 +103,7 @@
           }
         }
 
-        await new Promise(res => setTimeout(res, 300));
+        await new Promise(res => setTimeout(res, delayMs));
       }
     } finally {
       isPlaying.set(false);
@@ -133,10 +150,50 @@
   function hasAnyNotes() {
     return tab.some(row => row.some(cell => cell !== ""));
   }
+
+  // 박자 분수 클릭 시 편집 시작
+  function startEditTop() {
+    editingTimeTop = true;
+    timeTopInput = timeSignature.split('/')[0];
+  }
+
+  function startEditBottom() {
+    editingTimeBottom = true;
+    timeBottomInput = timeSignature.split('/')[1];
+  }
+
+  // 박자 변경 적용
+  function applyTimeSignature() {
+    // bottom은 2,4,8,16만 허용
+    if (!/^\d+$/.test(timeTopInput)) return; // 숫자 아닌 경우 무시
+    if (!["2", "4", "8", "16"].includes(timeBottomInput)) return;
+
+    timeSignature = `${timeTopInput}/${timeBottomInput}`;
+    editingTimeTop = false;
+    editingTimeBottom = false;
+  }
+
+  // 박자 입력 중 엔터 적용
+  function onTimeTopKeydown(e) {
+    if (e.key === "Enter") {
+      if (timeTopInput === "") return;
+      applyTimeSignature();
+    } else if (e.key === "Escape") {
+      editingTimeTop = false;
+    }
+  }
+
+  function onTimeBottomChange(e) {
+    timeBottomInput = e.target.value;
+    applyTimeSignature();
+  }
+
+  // 편집 중이면 박자 분수 표시 안 함
 </script>
 
-
 <style>
+  /* 기존 스타일 그대로 유지 */
+
   .container {
     height: 100%;
     width: 100%;
@@ -304,6 +361,42 @@
   .tab-table td:not(:empty)::after {
     display: none;
   }
+
+  /* 박자 표시용 셀 스타일 */
+  .time-signature-cell {
+    font-weight: bold;
+    font-size: 16px;
+    vertical-align: middle;
+    padding: 0 4px;
+    user-select: none;
+  }
+
+  /* 박자 편집 input 스타일 */
+  .time-top-input {
+    width: 24px;
+    font-size: 16px;
+    font-weight: bold;
+    text-align: center;
+    border: none;
+    border-bottom: 1.5px solid black;
+    background: transparent;
+  }
+  .time-top-input:focus {
+    outline: none;
+  }
+
+  .time-bottom-select {
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-top: 1.5px solid black;
+    background: transparent;
+    text-align-last: center;
+  }
+  .time-bottom-select:focus {
+    outline: none;
+  }
+
 </style>
 
 <div class="container">
@@ -316,13 +409,59 @@
     </div>
   </div>
 
+  <!-- 박자 선택 컨트롤 -->
+
   <div class="tab-display" bind:this={tabContainer}>
-    <table class="tab-table">
+    <table class="tab-table" spellcheck="false">
       <tbody>
-        {#each tab as line}
+        {#each tab as line, i}
           <tr>
-            {#each line as fret}
-              <td>{@html formatFret(fret)}</td>
+            {#if i === 0}
+              <!-- 첫 줄 첫 칸에 박자 분수 표시 -->
+              <td class="time-signature-cell" rowspan="6" style="border:none; padding-right: 10px;">
+                <div style="line-height: 1; text-align:center; cursor:pointer; user-select:none;">
+                  {#if editingTimeTop}
+                    <input
+                      class="time-top-input"
+                      type="text"
+                      bind:value={timeTopInput}
+                      on:keydown={onTimeTopKeydown}
+                      on:blur={applyTimeSignature}
+                      maxlength="2"
+                      autofocus
+                    />
+                  {:else}
+                    <div on:click={startEditTop}>{timeTopInput}</div>
+                  {/if}
+
+                  {#if editingTimeBottom}
+                    <select
+                      class="time-bottom-select"
+                      bind:value={timeBottomInput}
+                      on:change={onTimeBottomChange}
+                      on:blur={applyTimeSignature}
+                      autofocus
+                    >
+                      <option value="2">2</option>
+                      <option value="4">4</option>
+                      <option value="8">8</option>
+                      <option value="16">16</option>
+                    </select>
+                  {:else}
+                    <div style="border-top: 1px solid black; margin-top: 2px;" on:click={startEditBottom}>
+                      {timeBottomInput}
+                    </div>
+                  {/if}
+                </div>
+              </td>
+            {/if}
+            {#each line as fret, j}
+              <!-- 박자 표시 셀 뒷쪽부터 표시 -->
+              {#if j === 0 && i !== 0}
+                <!-- 첫 줄의 셀은 이미 위에서 박자 표시 때문에 열 하나 차지했으므로 건너뜀 -->
+              {:else}
+                <td>{@html formatFret(fret)}</td>
+              {/if}
             {/each}
           </tr>
         {/each}
@@ -376,7 +515,11 @@
     </div>
     <div>
       <button style="border-radius: 50%;" on:click={() => isMuted = !isMuted}>
-        {isMuted ? '🔇' : '🔊'}
+        {#if isMuted}
+          🔇
+        {:else}
+          🔊
+        {/if}
       </button>
     </div>
   </div>
