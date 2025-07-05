@@ -19,14 +19,35 @@
 
   let timeSignature = "4/4";
 
-  // 박자 편집용 상태
-  // 편집 중 여부
   let editingTimeTop = false;
   let editingTimeBottom = false;
 
-  // 임시 입력값
   let timeTopInput = timeSignature.split('/')[0];
   let timeBottomInput = timeSignature.split('/')[1];
+
+  // 저장 상태
+  let saveName = "";
+  let savedTabs = [];
+  let showSavedTabs = false;
+
+  loadSavedTabs();
+
+  // 드래그 상태
+  let dragSource = null;
+
+  function handleDragStart(stringIndex, colIndex) {
+    dragSource = { stringIndex, colIndex };
+  }
+
+  function handleDrop(targetString, targetCol) {
+    if (!dragSource) return;
+
+    const temp = tab[targetString][targetCol];
+    tab[targetString][targetCol] = tab[dragSource.stringIndex][dragSource.colIndex];
+    tab[dragSource.stringIndex][dragSource.colIndex] = temp;
+
+    dragSource = null;
+  }
 
   function setGuitar(type) {
     selectedGuitar = type;
@@ -143,6 +164,10 @@
     showTuningOptions2 = !showTuningOptions2;
   }
 
+  function toggleSavedTabs() {
+    showSavedTabs = !showSavedTabs;
+  }
+
   function formatFret(n) {
     return n === "" ? "" : n.toString();
   }
@@ -151,7 +176,6 @@
     return tab.some(row => row.some(cell => cell !== ""));
   }
 
-  // 박자 분수 클릭 시 편집 시작
   function startEditTop() {
     editingTimeTop = true;
     timeTopInput = timeSignature.split('/')[0];
@@ -162,10 +186,8 @@
     timeBottomInput = timeSignature.split('/')[1];
   }
 
-  // 박자 변경 적용
   function applyTimeSignature() {
-    // bottom은 2,4,8,16만 허용
-    if (!/^\d+$/.test(timeTopInput)) return; // 숫자 아닌 경우 무시
+    if (!/^\d+$/.test(timeTopInput)) return;
     if (!["2", "4", "8", "16"].includes(timeBottomInput)) return;
 
     timeSignature = `${timeTopInput}/${timeBottomInput}`;
@@ -173,7 +195,6 @@
     editingTimeBottom = false;
   }
 
-  // 박자 입력 중 엔터 적용
   function onTimeTopKeydown(e) {
     if (e.key === "Enter") {
       if (timeTopInput === "") return;
@@ -188,12 +209,52 @@
     applyTimeSignature();
   }
 
-  // 편집 중이면 박자 분수 표시 안 함
+  function saveTab() {
+    if (!saveName) {
+      alert("저장할 이름을 입력하세요!");
+      return;
+    }
+    const tabData = {
+      tab,
+      tuningNotes,
+      tuning,
+      selectedTuning,
+      selectedGuitar,
+      timeSignature
+    };
+    localStorage.setItem(`tab_${saveName}`, JSON.stringify(tabData));
+    loadSavedTabs();
+    alert(`'${saveName}'으로 저장되었습니다.`);
+    saveName = "";
+  }
+
+  function loadSavedTabs() {
+    savedTabs = [];
+    for (let key in localStorage) {
+      if (key.startsWith("tab_")) {
+        savedTabs.push(key.replace("tab_", ""));
+      }
+    }
+  }
+
+  function loadTab(name) {
+    const json = localStorage.getItem(`tab_${name}`);
+    if (json) {
+      const data = JSON.parse(json);
+      tab = data.tab;
+      tuningNotes = data.tuningNotes;
+      tuning = data.tuning;
+      selectedTuning = data.selectedTuning;
+      selectedGuitar = data.selectedGuitar;
+      timeSignature = data.timeSignature;
+    }
+    showSavedTabs = false;
+  }
 </script>
 
+<!-- ✅ 스타일은 동일하므로 생략하지 않고 유지 -->
 <style>
-  /* 기존 스타일 그대로 유지 */
-
+  /* 기존 스타일 그대로 */
   .container {
     height: 100%;
     width: 100%;
@@ -362,16 +423,20 @@
     display: none;
   }
 
-  /* 박자 표시용 셀 스타일 */
   .time-signature-cell {
-    font-weight: bold;
-    font-size: 16px;
-    vertical-align: middle;
-    padding: 0 4px;
-    user-select: none;
-  }
+  vertical-align: middle;  /* 수직 정렬 */
+  padding-right: 10px;
+  text-align: center;
+  display: inline-block;  /* 한 줄로 표시 */
+  justify-content: center;
+  align-items: center;
+  line-height: 20px;      /* 수직 중앙 정렬 */
+  font-size: 16px;        /* 글자 크기 설정 */
+  white-space: nowrap;    /* 줄 바꿈 방지 */
+}
 
-  /* 박자 편집 input 스타일 */
+
+
   .time-top-input {
     width: 24px;
     font-size: 16px;
@@ -381,6 +446,7 @@
     border-bottom: 1.5px solid black;
     background: transparent;
   }
+
   .time-top-input:focus {
     outline: none;
   }
@@ -393,10 +459,22 @@
     background: transparent;
     text-align-last: center;
   }
+
   .time-bottom-select:focus {
     outline: none;
   }
 
+  .saved-tabs {
+    padding: 1rem;
+    background: #eee;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .saved-tabs li {
+    list-style: none;
+    margin: 4px 0;
+  }
 </style>
 
 <div class="container">
@@ -404,70 +482,87 @@
     <button>guitar site</button>
     <div>
       <button on:click={resetTab}>reset</button>
+      <input placeholder="이름" bind:value={saveName} />
+      <button on:click={saveTab}>save</button>
+      <button on:click={toggleSavedTabs}>saved</button>
       <button on:click={pauseTab} disabled={!$isPlaying}>pause</button>
       <button on:click={playTab} disabled={$isPlaying || !hasAnyNotes()}>play</button>
     </div>
   </div>
 
-  <!-- 박자 선택 컨트롤 -->
+  {#if showSavedTabs}
+    <div class="saved-tabs">
+      <ul>
+        {#each savedTabs as name}
+          <li><button on:click={() => loadTab(name)}>{name}</button></li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
 
   <div class="tab-display" bind:this={tabContainer}>
-    <table class="tab-table" spellcheck="false">
-      <tbody>
-        {#each tab as line, i}
-          <tr>
+  <table class="tab-table" spellcheck="false">
+    <tbody>
+      {#each tab as line, i}
+        <tr>
+          <td class="time-signature-cell" style="border:none; padding-right:10px; vertical-align: middle;">
             {#if i === 0}
-              <!-- 첫 줄 첫 칸에 박자 분수 표시 -->
-              <td class="time-signature-cell" rowspan="6" style="border:none; padding-right: 10px;">
-                <div style="line-height: 1; text-align:center; cursor:pointer; user-select:none;">
-                  {#if editingTimeTop}
-                    <input
-                      class="time-top-input"
-                      type="text"
-                      bind:value={timeTopInput}
-                      on:keydown={onTimeTopKeydown}
-                      on:blur={applyTimeSignature}
-                      maxlength="2"
-                      autofocus
-                    />
-                  {:else}
-                    <div on:click={startEditTop}>{timeTopInput}</div>
-                  {/if}
+              <div style="line-height:1; text-align:center; cursor:pointer; user-select:none; display: flex; justify-content: center; align-items: center;">
+                {#if editingTimeTop}
+                  <input
+                    class="time-top-input"
+                    type="text"
+                    bind:value={timeTopInput}
+                    on:keydown={onTimeTopKeydown}
+                    on:blur={applyTimeSignature}
+                    maxlength="2"
+                    autofocus
+                  />
+                {:else}
+                  <div on:click={startEditTop}>{timeTopInput}</div>
+                {/if}
 
-                  {#if editingTimeBottom}
-                    <select
-                      class="time-bottom-select"
-                      bind:value={timeBottomInput}
-                      on:change={onTimeBottomChange}
-                      on:blur={applyTimeSignature}
-                      autofocus
-                    >
-                      <option value="2">2</option>
-                      <option value="4">4</option>
-                      <option value="8">8</option>
-                      <option value="16">16</option>
-                    </select>
-                  {:else}
-                    <div style="border-top: 1px solid black; margin-top: 2px;" on:click={startEditBottom}>
-                      {timeBottomInput}
-                    </div>
-                  {/if}
-                </div>
-              </td>
+                {#if editingTimeBottom}
+                  <select
+                    class="time-bottom-select"
+                    bind:value={timeBottomInput}
+                    on:change={onTimeBottomChange}
+                    on:blur={applyTimeSignature}
+                    autofocus
+                  >
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="8">8</option>
+                    <option value="16">16</option>
+                  </select>
+                {:else}
+                  <div style="border-top: 1px solid black; margin-top: 2px;" on:click={startEditBottom}>
+                    {timeBottomInput}
+                  </div>
+                {/if}
+              </div>
+            {:else}
+              <!-- 나머지 줄은 빈 칸으로 둔다 -->
+              &nbsp;
             {/if}
-            {#each line as fret, j}
-              <!-- 박자 표시 셀 뒷쪽부터 표시 -->
-              {#if j === 0 && i !== 0}
-                <!-- 첫 줄의 셀은 이미 위에서 박자 표시 때문에 열 하나 차지했으므로 건너뜀 -->
-              {:else}
-                <td>{@html formatFret(fret)}</td>
-              {/if}
-            {/each}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
+          </td>
+
+          {#each line as fret, j}
+            <td
+              draggable={fret !== ""}
+              on:dragstart={() => handleDragStart(i, j)}
+              on:dragover|preventDefault
+              on:drop={() => handleDrop(i, j)}
+            >
+              {@html formatFret(fret)}
+            </td>
+          {/each}
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+</div>
+
 
   <div class="controls">
     <button on:click={toggleTuner} class="setting">tuner</button>
