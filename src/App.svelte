@@ -18,21 +18,18 @@
   let tabContainer;
 
   let timeSignature = "4/4";
-
   let editingTimeTop = false;
   let editingTimeBottom = false;
-
   let timeTopInput = timeSignature.split('/')[0];
   let timeBottomInput = timeSignature.split('/')[1];
 
-  // 저장 상태
   let saveName = "";
   let savedTabs = [];
   let showSavedTabs = false;
+  let selectedTabName = "";
 
   loadSavedTabs();
 
-  // 드래그 상태
   let dragSource = null;
 
   function handleDragStart(stringIndex, colIndex) {
@@ -41,11 +38,9 @@
 
   function handleDrop(targetString, targetCol) {
     if (!dragSource) return;
-
     const temp = tab[targetString][targetCol];
     tab[targetString][targetCol] = tab[dragSource.stringIndex][dragSource.colIndex];
     tab[dragSource.stringIndex][dragSource.colIndex] = temp;
-
     dragSource = null;
   }
 
@@ -98,7 +93,6 @@
 
   async function playTab() {
     if (get(isPlaying)) return;
-
     const lastCol = getLastActiveColumn();
     if (lastCol === -1) return;
 
@@ -114,7 +108,6 @@
     try {
       for (let col = 0; col <= lastCol; col++) {
         if (!get(isPlaying)) break;
-
         for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
           const fret = tab[stringIndex][col];
           if (fret !== "" && !isNaN(fret)) {
@@ -123,7 +116,6 @@
             play(note);
           }
         }
-
         await new Promise(res => setTimeout(res, delayMs));
       }
     } finally {
@@ -137,13 +129,11 @@
 
   async function handleFretClick(stringIndex, fretIndex) {
     if (stringIndex === 6) return;
-
     if (currentTabPos + 1 >= tab[0].length) {
       tab = tab.map(row => [...row, "", ""]);
       await tick();
       if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
     }
-
     const stringNote = tuningNotes[5 - stringIndex];
     const note = getNoteFromString(stringNote, fretIndex);
     play(note);
@@ -166,6 +156,7 @@
 
   function toggleSavedTabs() {
     showSavedTabs = !showSavedTabs;
+    if (!showSavedTabs) selectedTabName = "";
   }
 
   function formatFret(n) {
@@ -189,7 +180,6 @@
   function applyTimeSignature() {
     if (!/^\d+$/.test(timeTopInput)) return;
     if (!["2", "4", "8", "16"].includes(timeBottomInput)) return;
-
     timeSignature = `${timeTopInput}/${timeBottomInput}`;
     editingTimeTop = false;
     editingTimeBottom = false;
@@ -247,234 +237,53 @@
       selectedTuning = data.selectedTuning;
       selectedGuitar = data.selectedGuitar;
       timeSignature = data.timeSignature;
+      currentTabPos = getLastActiveColumn() + 2;
     }
     showSavedTabs = false;
+    selectedTabName = "";
+  }
+
+  function deleteSelectedTab() {
+    if (!selectedTabName) {
+      alert("삭제할 악보를 선택하세요.");
+      return;
+    }
+    localStorage.removeItem(`tab_${selectedTabName}`);
+    savedTabs = savedTabs.filter(n => n !== selectedTabName);
+    selectedTabName = "";
+    alert("삭제 완료");
   }
 </script>
 
-<!-- ✅ 스타일은 동일하므로 생략하지 않고 유지 -->
 <style>
-  /* 기존 스타일 그대로 */
-  .container {
-    height: 100%;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    background: white;
-    margin: 0;
-    padding: 0;
-    font-family: sans-serif;
-  }
-
-  .top-bar {
-    display: flex;
-    justify-content: space-between;
-    padding: 1rem;
-  }
-
-  .tab-display {
-    background: #ccc;
-    padding: 1rem;
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 14px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    height: 22vh;
-    margin: 0 auto;
-    white-space: pre;
-    box-sizing: border-box;
-    max-width: 100%;
-  }
-
-  .controls {
-    display: flex;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    align-items: center;
-  }
-
-  .fretboard-wrapper {
-    flex: 1;
-    display: flex;
-    overflow: auto;
-    align-items: stretch;
-    min-height: 0;
-  }
-
-  .string-labels {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding: 0.1rem;
-    margin: 0;
-    gap: 24px;
-  }
-
-  .string-label {
-    background: red;
-    color: white;
-    padding: 0.1rem 0.4rem;
-    border-radius: 4px;
-    text-align: center;
-    font-weight: bold;
-    margin-right: 5px;
-  }
-
-  .tunerset {
-    display: flex;
-  }
-
-  .tunerset > button {
-    margin: 8px;
-  }
-
-  .tunerset > button.selected {
-    background-color: #666;
-    color: white;
-    font-weight: bold;
-  }
-
-  .fretboard {
-    flex: 1;
-    display: grid;
-    grid-template-columns: repeat(16, 1fr);
-    grid-template-rows: repeat(7, 1fr);
-    gap: 3px;
-    background: #999;
-    height: 350px;
-  }
-
-  .fret {
-    position: relative;
-    background: #ccc;
-    border: 1px solid #aaa;
-  }
-
-  .dot {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 20px;
-    height: 16px;
-    background: black;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-  }
-
-  .click-zone {
-    position: absolute;
-    bottom: -10px;
-    left: 0;
-    width: 100%;
-    height: 40%;
-    background: transparent;
-    cursor: pointer;
-  }
-
-  button {
-    padding: 0.5rem 1rem;
-    border: none;
-    border-radius: 10px;
-    background: #ddd;
-  }
-
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .footer {
-    display: flex;
-    justify-content: space-between;
-  }
-
-  .tab-table {
-    border-collapse: collapse;
-    font-family: 'Courier New', monospace;
-    font-size: 14px;
-    table-layout: auto;
-    width: max-content;
-  }
-
-  .tab-table td {
-    padding: 0;
-    margin: 0;
-    text-align: center;
-    white-space: nowrap;
-    min-width: 24px;
-    height: 20px;
-    position: relative;
-    z-index: 1;
-  }
-
-  .tab-table td::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 0;
-    height: 1px;
-    width: 100%;
-    background-color: black;
-    transform: translateY(-50%);
-    z-index: 0;
-  }
-
-  .tab-table td:not(:empty)::after {
-    display: none;
-  }
-
-  .time-signature-cell {
-  vertical-align: middle;  /* 수직 정렬 */
-  padding-right: 10px;
-  text-align: center;
-  display: inline-block;  /* 한 줄로 표시 */
-  justify-content: center;
-  align-items: center;
-  line-height: 20px;      /* 수직 중앙 정렬 */
-  font-size: 16px;        /* 글자 크기 설정 */
-  white-space: nowrap;    /* 줄 바꿈 방지 */
-}
-
-
-
-  .time-top-input {
-    width: 24px;
-    font-size: 16px;
-    font-weight: bold;
-    text-align: center;
-    border: none;
-    border-bottom: 1.5px solid black;
-    background: transparent;
-  }
-
-  .time-top-input:focus {
-    outline: none;
-  }
-
-  .time-bottom-select {
-    font-size: 16px;
-    font-weight: bold;
-    border: none;
-    border-top: 1.5px solid black;
-    background: transparent;
-    text-align-last: center;
-  }
-
-  .time-bottom-select:focus {
-    outline: none;
-  }
-
-  .saved-tabs {
-    padding: 1rem;
-    background: #eee;
-    max-height: 200px;
-    overflow-y: auto;
-  }
-
-  .saved-tabs li {
-    list-style: none;
-    margin: 4px 0;
-  }
+  .container { height: 100%; width: 100%; display: flex; flex-direction: column; background: white; margin: 0; padding: 0; font-family: sans-serif; }
+  .top-bar { display: flex; justify-content: space-between; padding: 1rem; }
+  .tab-display { background: #ccc; padding: 1rem; font-family: 'Courier New', monospace; font-size: 14px; overflow-x: auto; overflow-y: hidden; white-space: pre; box-sizing: border-box; max-width: 100%; }
+  .controls { display: flex; gap: 0.5rem; padding: 0.5rem 1rem; align-items: center; }
+  .fretboard-wrapper { flex: 1; display: flex; overflow: auto; align-items: stretch; }
+  .string-labels { display: flex; flex-direction: column; justify-content: center; gap: 24px; }
+  .string-label { background: red; color: white; padding: 0.1rem 0.4rem; border-radius: 4px; text-align: center; font-weight: bold; margin-right: 5px; }
+  .tunerset { display: flex; }
+  .tunerset > button { margin: 8px; }
+  .tunerset > button.selected { background: #666; color: white; font-weight: bold; }
+  .fretboard { flex: 1; display: grid; grid-template-columns: repeat(16, 1fr); grid-template-rows: repeat(7, 1fr); gap: 3px; background: #999; height: 350px; }
+  .fret { position: relative; background: #ccc; border: 1px solid #aaa; }
+  .dot { position: absolute; top: 50%; left: 50%; width: 20px; height: 16px; background: black; border-radius: 50%; transform: translate(-50%, -50%); }
+  .click-zone { position: absolute; bottom: -10px; left: 0; width: 100%; height: 40%; cursor: pointer; }
+  button { padding: 0.5rem 1rem; border: none; border-radius: 10px; background: #ddd; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .footer { display: flex; justify-content: space-between; }
+  .tab-table { border-collapse: collapse; font-family: 'Courier New', monospace; font-size: 14px; table-layout: auto; width: max-content; }
+  .tab-table td { min-width: 24px; height: 24px; line-height: 24px; position: relative; text-align: center; padding: 0; }
+  .tab-table td::after { content: ""; position: absolute; bottom: 50%; left: 0; width: 100%; height: 1px; background: black; transform: translateY(50%); }
+  .tab-table td:not(:empty)::after { display: none; }
+  .time-signature-cell { width: 50px; white-space: nowrap; font-size: 16px; display: inline-block; line-height: 20px; }
+  .saved-tabs { padding: 1rem; background: #eee; max-height: 200px; overflow-y: auto; }
+  .saved-tabs li { list-style: none; margin: 4px 0; cursor: pointer; }
+  .time-top-input { width: 24px; font-size: 16px; font-weight: bold; text-align: center; border: none; border-bottom: 1.5px solid black; background: transparent; }
+  .time-top-input:focus { outline: none; }
+  .time-bottom-select { font-size: 16px; font-weight: bold; border: none; border-top: 1.5px solid black; background: transparent; text-align-last: center; }
+  .time-bottom-select:focus { outline: none; }
 </style>
 
 <div class="container">
@@ -492,77 +301,55 @@
 
   {#if showSavedTabs}
     <div class="saved-tabs">
+      <button on:click={deleteSelectedTab}>Delete</button>
       <ul>
         {#each savedTabs as name}
-          <li><button on:click={() => loadTab(name)}>{name}</button></li>
+          <li on:click={() => selectedTabName = name} on:dblclick={() => loadTab(name)}>
+            {name} {selectedTabName === name ? "✅" : ""}
+          </li>
         {/each}
       </ul>
     </div>
   {/if}
 
   <div class="tab-display" bind:this={tabContainer}>
-  <table class="tab-table" spellcheck="false">
-    <tbody>
-      {#each tab as line, i}
-        <tr>
-          <td class="time-signature-cell" style="border:none; padding-right:10px; vertical-align: middle;">
-            {#if i === 0}
-              <div style="line-height:1; text-align:center; cursor:pointer; user-select:none; display: flex; justify-content: center; align-items: center;">
-                {#if editingTimeTop}
-                  <input
-                    class="time-top-input"
-                    type="text"
-                    bind:value={timeTopInput}
-                    on:keydown={onTimeTopKeydown}
-                    on:blur={applyTimeSignature}
-                    maxlength="2"
-                    autofocus
-                  />
-                {:else}
-                  <div on:click={startEditTop}>{timeTopInput}</div>
-                {/if}
-
-                {#if editingTimeBottom}
-                  <select
-                    class="time-bottom-select"
-                    bind:value={timeBottomInput}
-                    on:change={onTimeBottomChange}
-                    on:blur={applyTimeSignature}
-                    autofocus
-                  >
-                    <option value="2">2</option>
-                    <option value="4">4</option>
-                    <option value="8">8</option>
-                    <option value="16">16</option>
-                  </select>
-                {:else}
-                  <div style="border-top: 1px solid black; margin-top: 2px;" on:click={startEditBottom}>
-                    {timeBottomInput}
-                  </div>
-                {/if}
-              </div>
-            {:else}
-              <!-- 나머지 줄은 빈 칸으로 둔다 -->
-              &nbsp;
-            {/if}
-          </td>
-
-          {#each line as fret, j}
-            <td
-              draggable={fret !== ""}
-              on:dragstart={() => handleDragStart(i, j)}
-              on:dragover|preventDefault
-              on:drop={() => handleDrop(i, j)}
-            >
-              {@html formatFret(fret)}
+    <table class="tab-table" spellcheck="false">
+      <tbody>
+        {#each tab as line, i}
+          <tr>
+            <td class="time-signature-cell">
+              {#if i === 0}
+                <div style="display: flex; flex-direction: column; align-items: center; cursor: pointer; user-select: none;">
+                  {#if editingTimeTop}
+                    <input class="time-top-input" bind:value={timeTopInput} on:keydown={onTimeTopKeydown} on:blur={applyTimeSignature} maxlength="2" autofocus />
+                  {:else}
+                    <div on:click={startEditTop}>{timeTopInput}</div>
+                  {/if}
+                  {#if editingTimeBottom}
+                    <select class="time-bottom-select" bind:value={timeBottomInput} on:change={onTimeBottomChange} on:blur={applyTimeSignature} autofocus>
+                      <option value="2">2</option>
+                      <option value="4">4</option>
+                      <option value="8">8</option>
+                      <option value="16">16</option>
+                    </select>
+                  {:else}
+                    <div style="border-top: 1px solid black; margin-top: 2px;" on:click={startEditBottom}>{timeBottomInput}</div>
+                  {/if}
+                </div>
+              {:else}
+                &nbsp;
+              {/if}
             </td>
-          {/each}
-        </tr>
-      {/each}
-    </tbody>
-  </table>
-</div>
-
+            {#each line as fret, j}
+              <td draggable={fret !== ""} on:dragstart={() => handleDragStart(i, j)} on:dragover|preventDefault on:drop={() => handleDrop(i, j)}>
+                {@html formatFret(fret)}
+              </td>
+            {/each}
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
 
   <div class="controls">
     <button on:click={toggleTuner} class="setting">tuner</button>
@@ -610,11 +397,7 @@
     </div>
     <div>
       <button style="border-radius: 50%;" on:click={() => isMuted = !isMuted}>
-        {#if isMuted}
-          🔇
-        {:else}
-          🔊
-        {/if}
+        {#if isMuted} 🔇 {:else} 🔊 {/if}
       </button>
     </div>
   </div>
