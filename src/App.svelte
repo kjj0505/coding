@@ -1,7 +1,7 @@
 <script>
   import * as Tone from 'tone';
   import { writable, get } from 'svelte/store';
-  import { tick } from 'svelte';
+  import { tick, onMount } from 'svelte';
 
   const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -15,32 +15,74 @@
   let isMuted = false;
   const isPlaying = writable(false);
 
+  let undoStack = [];
+
   let tabContainer;
 
   let timeSignature = "4/4";
   let editingTimeTop = false;
-  let editingTimeBottom = false;
   let timeTopInput = timeSignature.split('/')[0];
   let timeBottomInput = timeSignature.split('/')[1];
 
   let saveName = "";
   let savedTabs = [];
   let showSavedTabs = false;
-  let selectedTabName = "";
+  let selectedTabs = [];
+
+  let dragSource = null;
+  let isDragging = false;
+
+  let selectedCell = null;
 
   loadSavedTabs();
 
-  let dragSource = null;
+  onMount(() => {
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace') {
+        if (selectedCell) {
+          e.preventDefault();
+          deleteCell(selectedCell.stringIndex, selectedCell.colIndex);
+          selectedCell = null;
+        }
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        undo();
+      }
+    });
+  });
+
+  function saveHistory() {
+    const snapshot = tab.map(row => [...row]);
+    undoStack.push(snapshot);
+    if (undoStack.length > 100) undoStack.shift();
+  }
+
+  function undo() {
+    if (undoStack.length === 0) return;
+    tab = undoStack.pop();
+  }
 
   function handleDragStart(stringIndex, colIndex) {
     dragSource = { stringIndex, colIndex };
+    isDragging = true;
   }
 
   function handleDrop(targetString, targetCol) {
     if (!dragSource) return;
+    saveHistory();
     const temp = tab[targetString][targetCol];
     tab[targetString][targetCol] = tab[dragSource.stringIndex][dragSource.colIndex];
     tab[dragSource.stringIndex][dragSource.colIndex] = temp;
+    dragSource = null;
+    isDragging = false;
+  }
+
+  function handleDragEnd() {
+    isDragging = false;
     dragSource = null;
   }
 
@@ -77,6 +119,7 @@
   }
 
   function resetTab() {
+    saveHistory();
     tab = Array(6).fill().map(() => Array(60).fill(""));
     currentTabPos = 0;
     if (tabContainer) tabContainer.scrollLeft = 0;
@@ -129,6 +172,7 @@
 
   async function handleFretClick(stringIndex, fretIndex) {
     if (stringIndex === 6) return;
+    saveHistory();
     if (currentTabPos + 1 >= tab[0].length) {
       tab = tab.map(row => [...row, "", ""]);
       await tick();
@@ -141,6 +185,15 @@
       tab[stringIndex][currentTabPos] = (fretIndex + 1).toString();
     }
     currentTabPos += 2;
+  }
+
+  function deleteCell(stringIndex, colIndex) {
+    saveHistory();
+    tab[stringIndex][colIndex] = "";
+  }
+
+  function selectCell(stringIndex, colIndex) {
+    selectedCell = { stringIndex, colIndex };
   }
 
   let showTuningOptions = false;
@@ -156,7 +209,7 @@
 
   function toggleSavedTabs() {
     showSavedTabs = !showSavedTabs;
-    if (!showSavedTabs) selectedTabName = "";
+    if (!showSavedTabs) selectedTabs = [];
   }
 
   function formatFret(n) {
@@ -172,17 +225,11 @@
     timeTopInput = timeSignature.split('/')[0];
   }
 
-  function startEditBottom() {
-    editingTimeBottom = true;
-    timeBottomInput = timeSignature.split('/')[1];
-  }
-
   function applyTimeSignature() {
     if (!/^\d+$/.test(timeTopInput)) return;
     if (!["2", "4", "8", "16"].includes(timeBottomInput)) return;
     timeSignature = `${timeTopInput}/${timeBottomInput}`;
     editingTimeTop = false;
-    editingTimeBottom = false;
   }
 
   function onTimeTopKeydown(e) {
@@ -204,6 +251,12 @@
       alert("저장할 이름을 입력하세요!");
       return;
     }
+
+    if (localStorage.getItem(`tab_${saveName}`)) {
+      alert(`같은 이름 '${saveName}' 의 악보가 이미 존재합니다.\n다른 이름을 입력해주세요.`);
+      return;
+    }
+
     const tabData = {
       tab,
       tuningNotes,
@@ -231,6 +284,7 @@
     const json = localStorage.getItem(`tab_${name}`);
     if (json) {
       const data = JSON.parse(json);
+      saveHistory();
       tab = data.tab;
       tuningNotes = data.tuningNotes;
       tuning = data.tuning;
@@ -240,18 +294,31 @@
       currentTabPos = getLastActiveColumn() + 2;
     }
     showSavedTabs = false;
-    selectedTabName = "";
+    selectedTabs = [];
   }
 
-  function deleteSelectedTab() {
-    if (!selectedTabName) {
+  function toggleTabSelection(name) {
+    if (selectedTabs.includes(name)) {
+      selectedTabs = selectedTabs.filter(n => n !== name);
+    } else {
+      selectedTabs = [...selectedTabs, name];
+    }
+  }
+
+  function deleteSelectedTabs() {
+    if (selectedTabs.length === 0) {
       alert("삭제할 악보를 선택하세요.");
       return;
     }
-    localStorage.removeItem(`tab_${selectedTabName}`);
-    savedTabs = savedTabs.filter(n => n !== selectedTabName);
-    selectedTabName = "";
-    alert("삭제 완료");
+    const really = confirm(`선택한 ${selectedTabs.length}개의 악보를 정말 삭제하시겠습니까?`);
+    if (!really) return;
+
+    selectedTabs.forEach(name => {
+      localStorage.removeItem(`tab_${name}`);
+    });
+    savedTabs = savedTabs.filter(name => !selectedTabs.includes(name));
+    selectedTabs = [];
+    alert("삭제 완료!");
   }
 </script>
 
@@ -274,16 +341,21 @@
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   .footer { display: flex; justify-content: space-between; }
   .tab-table { border-collapse: collapse; font-family: 'Courier New', monospace; font-size: 14px; table-layout: auto; width: max-content; }
-  .tab-table td { min-width: 24px; height: 24px; line-height: 24px; position: relative; text-align: center; padding: 0; }
+  .tab-table td { min-width: 24px; height: 24px; line-height: 24px; position: relative; text-align: center; padding: 0; vertical-align: middle; }
+  .tab-table .time-signature-cell { height: 24px; vertical-align: middle; }
   .tab-table td::after { content: ""; position: absolute; bottom: 50%; left: 0; width: 100%; height: 1px; background: black; transform: translateY(50%); }
   .tab-table td:not(:empty)::after { display: none; }
-  .time-signature-cell { width: 50px; white-space: nowrap; font-size: 16px; display: inline-block; line-height: 20px; }
-  .saved-tabs { padding: 1rem; background: #eee; max-height: 200px; overflow-y: auto; }
-  .saved-tabs li { list-style: none; margin: 4px 0; cursor: pointer; }
-  .time-top-input { width: 24px; font-size: 16px; font-weight: bold; text-align: center; border: none; border-bottom: 1.5px solid black; background: transparent; }
+  .tab-table td.is-dragging { background: rgba(0,0,0,0.03); outline: 1px dashed #999; }
+  .tab-table td.is-dragging::after { background: rgba(0,0,0,0.2); }
+  .time-sig-inline { display: inline-flex; align-items: center; gap: 2px; height: 100%; }
+  .time-sig-text, .time-sig-slash { font-size: 12px; line-height: 12px; }
+  .time-top-input { width: 20px; font-size: 12px; height: 12px; line-height: 12px; border: none; border-bottom: 1px solid black; text-align: center; background: transparent; padding: 0; margin: 0; }
   .time-top-input:focus { outline: none; }
-  .time-bottom-select { font-size: 16px; font-weight: bold; border: none; border-top: 1.5px solid black; background: transparent; text-align-last: center; }
-  .time-bottom-select:focus { outline: none; }
+  .time-bottom-select { font-size: 12px; line-height: 12px; height: 18px; padding: 0; margin: 0; border: 1px solid black; background: white; }
+  .saved-tabs { padding: 1rem; background: #eee; max-height: 200px; overflow-y: auto; }
+  .saved-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .saved-item { padding: 8px; border: 1px solid #aaa; border-radius: 6px; cursor: pointer; text-align: center; }
+  .saved-item.selected { background: #9f9e9e; color: #fff; font-weight: bold; }
 </style>
 
 <div class="container">
@@ -301,14 +373,19 @@
 
   {#if showSavedTabs}
     <div class="saved-tabs">
-      <button on:click={deleteSelectedTab}>Delete</button>
-      <ul>
+      <button style="margin-bottom: 8px;" on:click={deleteSelectedTabs}>Delete</button>
+      <div class="saved-grid">
         {#each savedTabs as name}
-          <li on:click={() => selectedTabName = name} on:dblclick={() => loadTab(name)}>
-            {name} {selectedTabName === name ? "✅" : ""}
-          </li>
+          <div
+            class="saved-item"
+            class:selected={selectedTabs.includes(name)}
+            on:click={() => toggleTabSelection(name)}
+            on:dblclick={() => loadTab(name)}
+          >
+            {name} {selectedTabs.includes(name) ? "✅" : ""}
+          </div>
         {/each}
-      </ul>
+      </div>
     </div>
   {/if}
 
@@ -319,29 +396,45 @@
           <tr>
             <td class="time-signature-cell">
               {#if i === 0}
-                <div style="display: flex; flex-direction: column; align-items: center; cursor: pointer; user-select: none;">
+                <span class="time-sig-inline">
                   {#if editingTimeTop}
-                    <input class="time-top-input" bind:value={timeTopInput} on:keydown={onTimeTopKeydown} on:blur={applyTimeSignature} maxlength="2" autofocus />
+                    <input
+                      class="time-top-input"
+                      bind:value={timeTopInput}
+                      on:keydown={onTimeTopKeydown}
+                      on:blur={applyTimeSignature}
+                      maxlength="2"
+                      autofocus
+                    />
                   {:else}
-                    <div on:click={startEditTop}>{timeTopInput}</div>
+                    <span class="time-sig-text" on:click={startEditTop}>{timeTopInput}</span>
                   {/if}
-                  {#if editingTimeBottom}
-                    <select class="time-bottom-select" bind:value={timeBottomInput} on:change={onTimeBottomChange} on:blur={applyTimeSignature} autofocus>
-                      <option value="2">2</option>
-                      <option value="4">4</option>
-                      <option value="8">8</option>
-                      <option value="16">16</option>
-                    </select>
-                  {:else}
-                    <div style="border-top: 1px solid black; margin-top: 2px;" on:click={startEditBottom}>{timeBottomInput}</div>
-                  {/if}
-                </div>
+                  <span class="time-sig-slash">/</span>
+                  <select
+                    class="time-bottom-select"
+                    bind:value={timeBottomInput}
+                    on:change={onTimeBottomChange}
+                  >
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="8">8</option>
+                    <option value="16">16</option>
+                  </select>
+                </span>
               {:else}
                 &nbsp;
               {/if}
             </td>
             {#each line as fret, j}
-              <td draggable={fret !== ""} on:dragstart={() => handleDragStart(i, j)} on:dragover|preventDefault on:drop={() => handleDrop(i, j)}>
+              <td
+                draggable={fret !== ""}
+                class:is-dragging={isDragging}
+                on:dragstart={() => handleDragStart(i, j)}
+                on:dragover|preventDefault
+                on:drop={() => handleDrop(i, j)}
+                on:dragend={handleDragEnd}
+                on:click={() => selectCell(i, j)}
+              >
                 {@html formatFret(fret)}
               </td>
             {/each}
