@@ -10,7 +10,7 @@
   let selectedTuning = "standard";
   let selectedGuitar = "acoustic";
 
-  let tab = Array(6).fill().map(() => Array(60).fill(""));
+  let tab = Array(6).fill().map(() => Array(59).fill(""));
   let currentTabPos = 0;
   let isMuted = false;
   const isPlaying = writable(false);
@@ -34,26 +34,51 @@
 
   let selectedCell = null;
 
+  let tuningSelectIndex = null; // 현재 선택된 튜닝 인덱스
+
+  function selectTuningNote(stringIndex, note) {
+    const baseOctaves = [4, 3, 3, 3, 2, 2];
+    tuning[stringIndex] = note;
+    tuningNotes[stringIndex] = `${note}${baseOctaves[stringIndex]}`;
+    tuningSelectIndex = null; // 드롭다운 닫기
+  } 
+
   loadSavedTabs();
 
   onMount(() => {
-    window.addEventListener('mouseup', () => {
-      isDragging = false;
-    });
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'Backspace') {
-        if (selectedCell) {
-          e.preventDefault();
-          deleteCell(selectedCell.stringIndex, selectedCell.colIndex);
-          selectedCell = null;
-        }
-      }
-
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-        undo();
-      }
-    });
+  // 드래그 중지
+  window.addEventListener('mouseup', () => {
+    isDragging = false;
   });
+
+  // 키보드 단축키 처리
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Backspace') {
+      if (selectedCell) {
+        e.preventDefault();
+        deleteCell(selectedCell.stringIndex, selectedCell.colIndex);
+        selectedCell = null;
+      }
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      undo();
+    }
+  });
+
+  // ✅ 드롭다운 외부 클릭 시 닫기
+  window.addEventListener('click', (e) => {
+    const el = e.target;
+    if (!(el instanceof Element)) return;
+
+    const insideLabel = el.closest('.string-label');
+    const insideDropdown = el.closest('.note-selector');
+
+    if (!insideLabel && !insideDropdown) {
+      tuningSelectIndex = null;
+    }
+  });
+});
 
   function saveHistory() {
     const snapshot = tab.map(row => [...row]);
@@ -97,7 +122,13 @@
       tuning = ["E", "B", "G", "D", "A", "E"];
     } else if (mode === "drop d") {
       tuningNotes = ["D4", "A3", "D3", "G3", "D2", "E2"];
-      tuning = ["D", "A", "D", "G", "D", "E"];
+      tuning = ["D", "A", "D", "G", "B", "E"];
+    } else if (mode === "dadgad") {
+      tuningNotes = ["D4", "A3", "G3", "D3", "A2", "D2"];
+      tuning = ["D", "A", "G", "D", "A", "D"];
+    } else if (mode === "open g") {
+      tuningNotes = ["D4", "B3", "G3", "D3", "G2", "D2"];
+      tuning = ["D", "B", "G", "D", "G", "D"];
     }
   }
 
@@ -120,7 +151,7 @@
 
   function resetTab() {
     saveHistory();
-    tab = Array(6).fill().map(() => Array(60).fill(""));
+    tab = Array(6).fill().map(() => Array(59).fill(""));
     currentTabPos = 0;
     if (tabContainer) tabContainer.scrollLeft = 0;
   }
@@ -320,6 +351,15 @@
     selectedTabs = [];
     alert("삭제 완료!");
   }
+
+  function isLowerString(i) {
+  return i >= 3; // 5번줄(인덱스 4), 6번줄(인덱스 5)이면 true
+}
+
+
+
+
+
 </script>
 
 <style>
@@ -345,7 +385,7 @@
   .tab-table .time-signature-cell { height: 24px; vertical-align: middle; }
   .tab-table td::after { content: ""; position: absolute; bottom: 50%; left: 0; width: 100%; height: 1px; background: black; transform: translateY(50%); }
   .tab-table td:not(:empty)::after { display: none; }
-  .tab-table td.is-dragging { background: rgba(0,0,0,0.03); outline: 1px dashed #999; }
+  .tab-table td.is-dragging { background: rgba(0,0,0,0.03); outline: 1px dashed #0d0d0d; }
   .tab-table td.is-dragging::after { background: rgba(0,0,0,0.2); }
   .time-sig-inline { display: inline-flex; align-items: center; gap: 2px; height: 100%; }
   .time-sig-text, .time-sig-slash { font-size: 12px; line-height: 12px; }
@@ -356,9 +396,48 @@
   .saved-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
   .saved-item { padding: 8px; border: 1px solid #aaa; border-radius: 6px; cursor: pointer; text-align: center; }
   .saved-item.selected { background: #9f9e9e; color: #fff; font-weight: bold; }
+  .note-selector {
+  position: absolute;
+  left: 110%;
+  top: 0;
+  background: white;
+  border: 1px solid #aaa;
+  border-radius: 6px;
+  z-index: 10;
+  box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+  display: grid;
+  grid-template-columns: repeat(3, auto); /* 3열로 정렬 */
+  gap: 4px;
+  padding: 6px;
+}
+
+.note-option {
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+  min-width: 30px;
+}
+
+.note-option:hover {
+  background: #f0f0f0;
+}
+
+.note-selector.above {
+  top: auto;
+  bottom: -152px; 
+  transform: translateY(-100%);
+}
+
+.disabled-note {  
+  background: #ddd;
+  color: #777;
+  font-weight: bold;
+  pointer-events: none;
+}
 </style>
 
-<div class="container">
+<div class="container"> 
   <div class="top-bar">
     <button>guitar site</button>
     <div>
@@ -450,15 +529,32 @@
       <div class="tunerset">
         <button class:selected={selectedTuning === "standard"} on:click={() => setTuning("standard")}>standard</button>
         <button class:selected={selectedTuning === "drop d"} on:click={() => setTuning("drop d")}>drop d</button>
+        <button class:selected={selectedTuning === "dadgad"} on:click={() => setTuning("dadgad")}>DADGAD</button>
+        <button class:selected={selectedTuning === "open g"} on:click={() => setTuning("open g")}>Open G</button>
       </div>
     {/if}
   </div>
 
   <div class="fretboard-wrapper">
     <div class="string-labels">
-      {#each tuning as t}
-        <div class="string-label">{t}</div>
-      {/each}
+      {#each tuning as t, i}
+  <div style="position: relative;">
+    <div class="string-label" on:click={() => tuningSelectIndex = tuningSelectIndex === i ? null : i}>{t}</div>
+    {#if tuningSelectIndex === i}
+  <div class="note-selector {isLowerString(i) ? 'above' : ''}">
+    {#each NOTES as note}
+  <div
+    class="note-option {note === tuning[i] ? 'disabled-note' : ''}"
+    on:click={() => note !== tuning[i] && selectTuningNote(i, note)}
+  >
+    {note}
+  </div>
+{/each}
+  </div>
+{/if}
+  </div>
+{/each}
+
     </div>
     <div class="fretboard">
       {#each Array(7) as _, stringIndex}
