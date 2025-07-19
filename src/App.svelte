@@ -5,7 +5,7 @@
 
   const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-  let tuningNotes = ["E4", "B3", "G3", "D3", "A2", "E2"];
+  export const tuningNotes = writable(["E4", "B3", "G3", "D3", "A2", "E2"]);
   let tuning = ["E", "B", "G", "D", "A", "E"];
   let selectedTuning = "standard";
   let selectedGuitar = "acoustic";
@@ -18,11 +18,10 @@
   let undoStack = [];
 
   let tabContainer;
-
   let timeSignature = "4/4";
   let editingTimeTop = false;
-  let timeTopInput = timeSignature.split('/')[0];
-  let timeBottomInput = timeSignature.split('/')[1];
+  let timeTopInput = "4";
+  let timeBottomInput = "4";
 
   let saveName = "";
   let savedTabs = [];
@@ -30,55 +29,68 @@
   let selectedTabs = [];
 
   let dragSource = null;
+  let dragStart = null;
+  let dragEnd = null;
+  let selectedRange = null;
   let isDragging = false;
+  let isSwapping = false;
+  let isShiftDown = false;
 
   let selectedCell = null;
-
-  let tuningSelectIndex = null; // 현재 선택된 튜닝 인덱스
+  let tuningSelectIndex = null;
 
   function selectTuningNote(stringIndex, note) {
     const baseOctaves = [4, 3, 3, 3, 2, 2];
     tuning[stringIndex] = note;
-    tuningNotes[stringIndex] = `${note}${baseOctaves[stringIndex]}`;
-    tuningSelectIndex = null; // 드롭다운 닫기
-  } 
+
+    const updated = [...get(tuningNotes)];
+    updated[stringIndex] = `${note}${baseOctaves[stringIndex]}`;
+    tuningNotes.set(updated);
+
+    tuningSelectIndex = null;
+  }
 
   loadSavedTabs();
 
   onMount(() => {
-  // 드래그 중지
-  window.addEventListener('mouseup', () => {
-    isDragging = false;
-  });
+    window.addEventListener('mouseup', () => {
+      isDragging = false; 
+      isSwapping = false;
+    });
 
-  // 키보드 단축키 처리
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'Backspace') {
-      if (selectedCell) {
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Shift') isShiftDown = true;
+
+      if (e.key === 'Backspace') {
         e.preventDefault();
-        deleteCell(selectedCell.stringIndex, selectedCell.colIndex);
-        selectedCell = null;
+        if (selectedRange) {
+          deleteRange(selectedRange);
+          selectedRange = null;
+        } else if (selectedCell) {
+          deleteCell(selectedCell.stringIndex, selectedCell.colIndex);
+          selectedCell = null;
+        }
       }
-    }
 
-    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-      undo();
-    }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        undo();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'Shift') isShiftDown = false;
+    });
+
+    window.addEventListener('click', (e) => {
+      const el = e.target;
+      if (!(el instanceof Element)) return;
+      const insideLabel = el.closest('.string-label');
+      const insideDropdown = el.closest('.note-selector');
+      if (!insideLabel && !insideDropdown) {
+        tuningSelectIndex = null;
+      }
+    });
   });
-
-  // ✅ 드롭다운 외부 클릭 시 닫기
-  window.addEventListener('click', (e) => {
-    const el = e.target;
-    if (!(el instanceof Element)) return;
-
-    const insideLabel = el.closest('.string-label');
-    const insideDropdown = el.closest('.note-selector');
-
-    if (!insideLabel && !insideDropdown) {
-      tuningSelectIndex = null;
-    }
-  });
-});
 
   function saveHistory() {
     const snapshot = tab.map(row => [...row]);
@@ -91,24 +103,55 @@
     tab = undoStack.pop();
   }
 
-  function handleDragStart(stringIndex, colIndex) {
-    dragSource = { stringIndex, colIndex };
+  function handleDragStart(i, j) {
+    if (isShiftDown) {
+      dragStart = { stringIndex: i, colIndex: j };
+      isSwapping = false;
+    } else {
+      if (tab[i][j] === "") return;
+      dragSource = { stringIndex: i, colIndex: j };
+      isSwapping = true;
+    }
     isDragging = true;
   }
 
-  function handleDrop(targetString, targetCol) {
-    if (!dragSource) return;
-    saveHistory();
-    const temp = tab[targetString][targetCol];
-    tab[targetString][targetCol] = tab[dragSource.stringIndex][dragSource.colIndex];
-    tab[dragSource.stringIndex][dragSource.colIndex] = temp;
-    dragSource = null;
+  function handleDrop(i, j) {
+    if (!isDragging) return;
+
+    if (isShiftDown && dragStart) {
+      dragEnd = { stringIndex: i, colIndex: j };
+      const startRow = Math.min(dragStart.stringIndex, dragEnd.stringIndex);
+      const endRow = Math.max(dragStart.stringIndex, dragEnd.stringIndex);
+      const startCol = Math.min(dragStart.colIndex, dragEnd.colIndex);
+      const endCol = Math.max(dragStart.colIndex, dragEnd.colIndex);
+
+      selectedRange = {
+        start: { stringIndex: startRow, colIndex: startCol },
+        end: { stringIndex: endRow, colIndex: endCol }
+      };
+
+      dragStart = null;
+      dragEnd = null;
+
+    } else if (!isShiftDown && dragSource) {
+      saveHistory();
+      const temp = tab[i][j];
+      tab[i][j] = tab[dragSource.stringIndex][dragSource.colIndex];
+      tab[dragSource.stringIndex][dragSource.colIndex] = temp;
+      dragSource = null;
+    }
+
     isDragging = false;
+    isSwapping = false;
   }
 
-  function handleDragEnd() {
-    isDragging = false;
-    dragSource = null;
+  function deleteRange(range) {
+    saveHistory();
+    for (let i = range.start.stringIndex; i <= range.end.stringIndex; i++) {
+      for (let j = range.start.colIndex; j <= range.end.colIndex; j++) {
+        tab[i][j] = "";
+      }
+    }
   }
 
   function setGuitar(type) {
@@ -118,17 +161,17 @@
   function setTuning(mode) {
     selectedTuning = mode;
     if (mode === "standard") {
-      tuningNotes = ["E4", "B3", "G3", "D3", "A2", "E2"];
       tuning = ["E", "B", "G", "D", "A", "E"];
+      tuningNotes.set(["E4", "B3", "G3", "D3", "A2", "E2"]);
     } else if (mode === "drop d") {
-      tuningNotes = ["D4", "A3", "D3", "G3", "D2", "E2"];
       tuning = ["D", "A", "D", "G", "B", "E"];
+      tuningNotes.set(["D4", "A3", "D3", "G3", "D2", "E2"]);
     } else if (mode === "dadgad") {
-      tuningNotes = ["D4", "A3", "G3", "D3", "A2", "D2"];
       tuning = ["D", "A", "G", "D", "A", "D"];
+      tuningNotes.set(["D4", "A3", "G3", "D3", "A2", "D2"]);
     } else if (mode === "open g") {
-      tuningNotes = ["D4", "B3", "G3", "D3", "G2", "D2"];
       tuning = ["D", "B", "G", "D", "G", "D"];
+      tuningNotes.set(["D4", "B3", "G3", "D3", "G2", "D2"]);
     }
   }
 
@@ -151,10 +194,10 @@
 
   function resetTab() {
     saveHistory();
-    tab = Array(6).fill().map(() => Array(59).fill(""));
+    tab = Array(6).fill().map(() => Array(59).fill("")); 
     currentTabPos = 0;
     if (tabContainer) tabContainer.scrollLeft = 0;
-  }
+  } 
 
   function getLastActiveColumn() {
     for (let col = tab[0].length - 1; col >= 0; col--) {
@@ -169,7 +212,6 @@
     if (get(isPlaying)) return;
     const lastCol = getLastActiveColumn();
     if (lastCol === -1) return;
-
     isPlaying.set(true);
     await Tone.start();
 
@@ -185,9 +227,9 @@
         for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
           const fret = tab[stringIndex][col];
           if (fret !== "" && !isNaN(fret)) {
-            const stringNote = tuningNotes[5 - stringIndex];
-            const note = getNoteFromString(stringNote, parseInt(fret));
-            play(note);
+            const stringNote = get(tuningNotes)[stringIndex];
+const note = getNoteFromString(stringNote, parseInt(fret));
+play(note);
           }
         }
         await new Promise(res => setTimeout(res, delayMs));
@@ -204,18 +246,20 @@
   async function handleFretClick(stringIndex, fretIndex) {
     if (stringIndex === 6) return;
     saveHistory();
-    if (currentTabPos + 1 >= tab[0].length) {
+
+    const col = findNextAvailableCol(0, 2);
+
+    if (col + 1 >= tab[0].length) {
       tab = tab.map(row => [...row, "", ""]);
       await tick();
       if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
     }
-    const stringNote = tuningNotes[5 - stringIndex];
-    const note = getNoteFromString(stringNote, fretIndex);
-    play(note);
-    if (tab[stringIndex]) {
-      tab[stringIndex][currentTabPos] = (fretIndex + 1).toString();
-    }
-    currentTabPos += 2;
+
+    const stringNote = get(tuningNotes)[stringIndex];
+const note = getNoteFromString(stringNote, fretIndex);
+play(note);
+
+    tab[stringIndex][col] = (fretIndex + 1).toString();
   }
 
   function deleteCell(stringIndex, colIndex) {
@@ -226,9 +270,6 @@
   function selectCell(stringIndex, colIndex) {
     selectedCell = { stringIndex, colIndex };
   }
-
-  let showTuningOptions = false;
-  let showTuningOptions2 = false;
 
   function toggleTuner() {
     showTuningOptions = !showTuningOptions;
@@ -290,7 +331,7 @@
 
     const tabData = {
       tab,
-      tuningNotes,
+      tuningNotes: get(tuningNotes),
       tuning,
       selectedTuning,
       selectedGuitar,
@@ -317,7 +358,7 @@
       const data = JSON.parse(json);
       saveHistory();
       tab = data.tab;
-      tuningNotes = data.tuningNotes;
+      tuningNotes.set(data.tuningNotes);
       tuning = data.tuning;
       selectedTuning = data.selectedTuning;
       selectedGuitar = data.selectedGuitar;
@@ -353,14 +394,29 @@
   }
 
   function isLowerString(i) {
-  return i >= 3; // 5번줄(인덱스 4), 6번줄(인덱스 5)이면 true
-}
+    return i >= 3;
+  }
 
+  function findNextAvailableCol(start = 0, step = 2) {
+    const maxCol = tab[0].length;
+    for (let col = start; col < maxCol; col += step) {
+      let isEmpty = true;
+      for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
+        if (tab[stringIndex][col] !== "") {
+          isEmpty = false;
+          break;
+        }
+      }
+      if (isEmpty) return col;
+    }
+    return maxCol;
+  }
 
-
-
-
+  let showTuningOptions = false;
+  let showTuningOptions2 = false;
 </script>
+
+
 
 <style>
   .container { height: 100%; width: 100%; display: flex; flex-direction: column; background: white; margin: 0; padding: 0; font-family: sans-serif; }
@@ -506,16 +562,17 @@
             </td>
             {#each line as fret, j}
               <td
-                draggable={fret !== ""}
-                class:is-dragging={isDragging}
-                on:dragstart={() => handleDragStart(i, j)}
-                on:dragover|preventDefault
-                on:drop={() => handleDrop(i, j)}
-                on:dragend={handleDragEnd}
-                on:click={() => selectCell(i, j)}
-              >
-                {@html formatFret(fret)}
-              </td>
+  draggable={true}
+  class:is-dragging={isDragging}
+  on:dragstart={() => handleDragStart(i, j)}
+  on:dragover|preventDefault
+  on:drop={() => handleDrop(i, j)}
+  on:dragend={() => isDragging = false}
+  on:click={() => selectCell(i, j)}
+>
+  {@html formatFret(fret)}
+</td>
+
             {/each}
           </tr>
         {/each}
