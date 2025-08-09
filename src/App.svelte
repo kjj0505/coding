@@ -55,6 +55,8 @@
   let rightDragEnd = null;
   let isRightDragging = false;
 
+  const pressedKeys = new Set();
+
 
   onMount(() => {
   // 👉 우클릭 메뉴 방지 (마우스 오른쪽 클릭 시 context 메뉴 안 뜨게)
@@ -105,6 +107,43 @@
       undo();
     }
   });
+
+  window.addEventListener("keydown", async (e) => {
+  if (hoveredFretIndex == null) return;
+
+  const pressedNum = parseInt(e.key);
+  if (pressedNum >= 1 && pressedNum <= 6 && !pressedKeys.has(pressedNum)) {
+    pressedKeys.add(pressedNum);
+
+    const stringIndex = 6 - pressedNum;
+    const stringNote = get(tuningNotes)[stringIndex];
+    const note = getNoteFromString(stringNote, hoveredFretIndex);
+
+    if (!isMuted) {
+      play(note);
+    }
+
+    saveHistory();
+
+    const col = findNextAvailableCol(0, 2);
+    if (col + 1 >= tab[0].length) {
+      tab = tab.map(row => [...row, "", ""]);
+      await tick();
+      if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
+    }
+
+    tab[stringIndex][col] = (hoveredFretIndex + 1).toString();
+  }
+});
+
+  window.addEventListener("keyup", (e) => {
+  if (e.key === 'Shift') isShiftDown = false;
+
+  const releasedNum = parseInt(e.key);
+  if (pressedKeys.has(releasedNum)) {
+    pressedKeys.delete(releasedNum);
+  }
+});
 
   // 👉 키 업 이벤트 (Shift 키 상태 해제)
   window.addEventListener('keyup', (e) => {
@@ -498,12 +537,112 @@ function handleDragStart(i, j) {
 
   let showTuningOptions = false;
   let showTuningOptions2 = false;
+
+
+  let hoveredFret = null;
+  let hoveredFretIndex = null; 
+
+
+  let showChordBox = false;
+
+const chords = {
+  C: { frets: ["x", 3, 2, 0, 1, 0] },
+  G: { frets: [3, 2, 0, 0, 0, 3] },
+  Am: { frets: ["x", 0, 2, 2, 1, 0] },
+  F: { frets: [1, 3, 3, 2, 1, 1] },
+  D: { frets: ["x", "x", 0, 2, 3, 2] },
+  E: { frets: [0, 2, 2, 1, 0, 0] }
+};
+
+function toggleChordBox() {
+  showChordBox = !showChordBox;
+}
+
+function applyChord(chordName) {
+  const chord = chords[chordName];
+  if (!chord) return;
+
+  saveHistory();
+
+  const col = findNextAvailableCol(0, 2);
+  if (col + 1 >= tab[0].length) {
+    tab = tab.map(row => [...row, "", ""]);
+  }
+
+  // 각 줄에 프렛 번호 입력
+  for (let i = 0; i < 6; i++) {
+    const fret = chord.frets[i];
+    tab[i][col] = fret === "x" ? "" : fret.toString();
+  }
+
+  // 동시에 코드 소리 재생
+  playChord(chordName);
+
+}
+
+
+
+// 코드 UI toggle 함수
+
+// 코드 클릭 시 호출: 악보에 입력 + 소리 재생
+
+// 코드 구성음을 동시에 재생
+function playChord(chordName, duration = 0.6) {
+  const chord = chords[chordName];
+  if (!chord) return;
+
+  Tone.start();
+  const now = Tone.now();
+  const synth = new Tone.PolySynth().toDestination();
+
+  chord.frets.forEach((fret, stringIndex) => {
+    if (fret === "x") return;
+
+    const stringNote = get(tuningNotes)[stringIndex];
+    const note = getNoteFromString(stringNote, fret);
+    if (!isMuted) {
+      synth.triggerAttackRelease(note, duration, now);
+    }
+  });
+}
+
+
+
+
+
+
+  
+
+
+
 </script>
 
 
 
 
 <style>
+  .chord-box {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 6px;
+  background: white;
+  padding: 10px;
+  border: 1px solid #aaa;
+  border-radius: 6px;
+  box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
+  margin-left: 10px;
+}
+.chord-button {
+  padding: 6px 10px;
+  background: #eee;
+  border: 1px solid #999;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.chord-button:hover {
+  background: #ccc;
+}
   .container { height: 100%; width: 100%; display: flex; flex-direction: column; background: white; margin: 0; padding: 0; font-family: sans-serif; }
   .top-bar { display: flex; justify-content: space-between; padding: 1rem; }
   .tab-display { background: #ccc; padding: 1rem; font-family: 'Courier New', monospace; font-size: 14px; overflow-x: auto; overflow-y: hidden; white-space: pre; box-sizing: border-box; max-width: 100%; }
@@ -686,16 +825,35 @@ function handleDragStart(i, j) {
   </div>
 
   <div class="controls">
-    <button on:click={toggleTuner} class="setting">tuner</button>
-    {#if showTuningOptions}
-      <div class="tunerset">
-        <button class:selected={selectedTuning === "standard"} on:click={() => setTuning("standard")}>standard</button>
-        <button class:selected={selectedTuning === "drop d"} on:click={() => setTuning("drop d")}>drop d</button>
-        <button class:selected={selectedTuning === "dadgad"} on:click={() => setTuning("dadgad")}>DADGAD</button>
-        <button class:selected={selectedTuning === "open g"} on:click={() => setTuning("open g")}>Open G</button>
-      </div>
-    {/if}
-  </div>
+  <!-- 1) tuner 버튼 -->
+  <button on:click={toggleTuner} class="setting">tuner</button>
+
+  <!-- 2) 튜닝 옵션: tuner 바로 다음에 배치 -->
+  {#if showTuningOptions}
+    <div class="tunerset">
+      <button class:selected={selectedTuning === "standard"} on:click={() => setTuning("standard")}>standard</button>
+      <button class:selected={selectedTuning === "drop d"} on:click={() => setTuning("drop d")}>drop d</button>
+      <button class:selected={selectedTuning === "dadgad"} on:click={() => setTuning("dadgad")}>DADGAD</button>
+      <button class:selected={selectedTuning === "open g"} on:click={() => setTuning("open g")}>Open G</button>
+    </div>
+  {/if}
+
+  <!-- 3) code 버튼 -->
+  <button on:click={toggleChordBox} class="setting">code</button>
+
+  <!-- 4) 코드 목록: code 바로 다음에 배치 -->
+  {#if showChordBox}
+    <div class="tunerset chord-set">
+      <button on:click={() => applyChord("C")}>C</button>
+      <button on:click={() => applyChord("G")}>G</button>
+      <button on:click={() => applyChord("Am")}>Am</button>
+      <button on:click={() => applyChord("F")}>F</button>
+      <button on:click={() => applyChord("D")}>D</button>
+      <button on:click={() => applyChord("E")}>E</button>
+    </div>
+  {/if}
+</div>
+
 
   <div class="fretboard-wrapper">
     <div class="string-labels">
@@ -720,8 +878,18 @@ function handleDragStart(i, j) {
     </div>
     <div class="fretboard">
       {#each Array(7) as _, stringIndex}
-        {#each Array(16) as _, fretIndex}
-          <div class="fret">
+  {#each Array(16) as _, fretIndex}
+    <div
+      class="fret"
+      on:mouseenter={() => {
+        hoveredFretIndex = fretIndex;
+        hoveredFret = stringIndex;
+      }}
+      on:mouseleave={() => {
+        hoveredFretIndex = null;
+        hoveredFret = null;
+      }}
+    >
             {#if stringIndex < 6}
               <div class="click-zone" on:click={() => handleFretClick(stringIndex, fretIndex)}></div>
             {/if}
