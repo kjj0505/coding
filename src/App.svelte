@@ -18,10 +18,6 @@
   let undoStack = [];
 
   let tabContainer;
-  let timeSignature = "4/4";
-  let editingTimeTop = false;
-  let timeTopInput = "4";
-  let timeBottomInput = "4";
 
   let saveName = "";
   let savedTabs = [];
@@ -38,6 +34,8 @@
 
   let selectedCell = null;
   let tuningSelectIndex = null;
+
+  let sustainExt = []; // { str, start, end }를 저장: 같은 줄(str)에서 start열의 음을 end열까지 유지
 
   function selectTuningNote(stringIndex, note) {
     const baseOctaves = [2, 2, 3, 3, 4, 4]; // 6번~1번줄
@@ -58,7 +56,7 @@
   const pressedKeys = new Set();
 
 
-  onMount(() => {
+  onMount(async () => {
   // 👉 우클릭 메뉴 방지 (마우스 오른쪽 클릭 시 context 메뉴 안 뜨게)
   window.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -69,14 +67,30 @@
     const startCol = Math.min(rightDragStart.colIndex, rightDragEnd.colIndex);
     const endCol = Math.max(rightDragStart.colIndex, rightDragEnd.colIndex);
 
-    const baseFret = tab[startRow][startCol];
-    if (baseFret !== "") {
-      saveHistory();
-      tab[startRow][startCol] = baseFret;
-      for (let j = startCol + 1; j <= endCol; j++) {
-        tab[startRow][j] = "~";
-      }
-    }
+    // 시작칸이 "~"면 왼쪽의 숫자를 실제 시작점으로 보정
+   let headCol = startCol;
+   if (tab[startRow][headCol] === "~") {
+     let k = headCol - 1;
+     while (k >= 0 && tab[startRow][k] === "~") k--;
+     if (k >= 0 && tab[startRow][k] !== "" && !isNaN(tab[startRow][k])) {
+       headCol = k;
+     }
+   }
+   const headVal = tab[startRow][headCol];
+   if (headVal !== "" && !isNaN(headVal)) {
+     saveHistory();
+     // 1) 지속 구간 기록/업데이트
+     const idx = sustainExt.findIndex(s => s.str === startRow && s.start === headCol);
+     if (idx >= 0) {
+       sustainExt[idx].end = Math.max(sustainExt[idx].end, endCol);
+     } else {
+       sustainExt.push({ str: startRow, start: headCol, end: endCol });
+     }
+     // 2) 빈칸만 "~"로 표시 (사이에 다른 숫자가 있어도 덮지 않음)
+     for (let j = headCol + 1; j <= endCol; j++) {
+       if (tab[startRow][j] === "") tab[startRow][j] = "~";
+     }
+   }
 
     rightDragStart = null;
     rightDragEnd = null;
@@ -108,33 +122,7 @@
     }
   });
 
-  window.addEventListener("keydown", async (e) => {
-  if (hoveredFretIndex == null) return;
 
-  const pressedNum = parseInt(e.key);
-  if (pressedNum >= 1 && pressedNum <= 6 && !pressedKeys.has(pressedNum)) {
-    pressedKeys.add(pressedNum);
-
-    const stringIndex = 6 - pressedNum;
-    const stringNote = get(tuningNotes)[stringIndex];
-    const note = getNoteFromString(stringNote, hoveredFretIndex);
-
-    if (!isMuted) {
-      play(note);
-    }
-
-    saveHistory();
-
-    const col = findNextAvailableCol(0, 2);
-    if (col + 1 >= tab[0].length) {
-      tab = tab.map(row => [...row, "", ""]);
-      await tick();
-      if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
-    }
-
-    tab[stringIndex][col] = (hoveredFretIndex + 1).toString();
-  }
-});
 
   window.addEventListener("keyup", (e) => {
   if (e.key === 'Shift') isShiftDown = false;
@@ -160,6 +148,11 @@
       tuningSelectIndex = null;
     }
   });
+  await buildInstruments(selectedGuitar);     // ✅ 세팅 완료 보장
+
+  // ✅ 브라우저 오디오 정책 해제: 페이지 내 첫 클릭/터치 시 AudioContext 열기
+  const unlock = async () => { await ensureAudioReady(); };
+  window.addEventListener('pointerdown', unlock, { once: true });
 });
 
 
@@ -229,6 +222,7 @@ function handleDragStart(i, j) {
 
   function setGuitar(type) {
     selectedGuitar = type;
+    buildInstruments(type);
   }
 
   function setTuning(mode) {
@@ -259,17 +253,36 @@ function handleDragStart(i, j) {
     return `${note}${octave}`;
   }
 
-  function play(note, duration = 0.3) {
-  if (isMuted) return;
-  Tone.start();
-  const synth = new Tone.Synth().toDestination();
-  synth.triggerAttackRelease(note, duration); // duration: 초 단위
+  async function play(note, duration, velocity = 0.85, atTime) {
+  if (isMuted || !note) return;
+  if (buildingAudio) {                 // 전환이 끝날 때까지 한 틱 양보
+   await new Promise(r => setTimeout(r, 0));
+   if (buildingAudio) return;         // 혹시 길어지면 그때만 보류
+ }         // 전환 중엔 발음 보류(원하면 대기로 바꿔도 OK)
+  await ensureAudioReady();
+  if (synthsDead()) await buildInstruments(selectedGuitar);
+  if (!monoSynth) return;
+  const d = (duration ?? (getCellMs() / 1000));
+  // 한 음만 나게: 이전 음 즉시 릴리즈
+  try { monoSynth.triggerRelease(); } catch {}
+  monoSynth.triggerAttackRelease(note, d, atTime, velocity);
 }
 
   function resetTab() {
     saveHistory();
     tab = Array(6).fill().map(() => Array(59).fill(""));
     currentTabPos = 0;
+
+    timeSignature = "4/4";
+    bpm = 120;
+    sustainExt = []
+    
+    // 선택/드래그 상태도 정리(선택)
+    selectedCell = null;
+    selectedRange = null;
+    isDragging = false;
+    isSwapping = false;
+
     if (tabContainer) tabContainer.scrollLeft = 0;
   }
 
@@ -283,63 +296,78 @@ function handleDragStart(i, j) {
   }
 
   async function playTab() {
-  if (get(isPlaying)) return;
+  if (get(isPlaying) || buildingAudio) return;
   const lastCol = getLastActiveColumn();
   if (lastCol === -1) return;
+  await ensureAudioReady();
+  if (synthsDead()) await buildInstruments(selectedGuitar);
   isPlaying.set(true);
-  await Tone.start();
 
-  let delayMs = 300;
-  if (timeSignature === "3/4") delayMs = 400;
-  else if (timeSignature === "6/8") delayMs = 200;
-  else if (timeSignature === "2/4") delayMs = 350;
-  else if (timeSignature === "5/4") delayMs = 300;
 
-  try {
-    for (let col = 0; col <= lastCol; col++) {
-      if (!get(isPlaying)) break;
+  const delayMs = getCellMs(); // ✅ 분모(2/4/8/16)·BPM 반영
 
-      for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
-        const cell = tab[stringIndex][col];
+    try {
+      for (let col = 0; col <= lastCol; col++) {
+        if (!get(isPlaying)) break;
 
-        // 시작 음이면 재생하고 ~ 개수만큼 sustain 계산
-        if (cell !== "" && cell !== "~" && !isNaN(cell)) {
-  let sustain = 1;
-  let lookahead = col + 1;
-  while (lookahead <= lastCol && tab[stringIndex][lookahead] === "~") {
-    sustain++;
-    lookahead++;
-  }
-  const stringNote = get(tuningNotes)[stringIndex];
-  const note = getNoteFromString(stringNote, parseInt(cell));
-  play(note, (sustain * delayMs) / 1000);
-}
-
+        for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
+          const cell = tab[stringIndex][col];
+          if (cell !== "" && cell !== "~" && !isNaN(cell)) {
+            let sustain = 1;
+            let lookahead = col + 1;
+            while (lookahead <= lastCol && tab[stringIndex][lookahead] === "~") {
+              sustain++;
+              lookahead++;
+            }
+            const stringNote = get(tuningNotes)[stringIndex];
+            const note = getNoteFromString(stringNote, parseInt(cell));
+            play(note, (sustain * delayMs) / 1000);
+          }
+        }
+        await new Promise(res => setTimeout(res, delayMs));
       }
-
-      await new Promise(res => setTimeout(res, delayMs));
+    } finally {
+      isPlaying.set(false);
     }
-  } finally {
-    isPlaying.set(false);
   }
-}
+
 
 
   function pauseTab() {
     isPlaying.set(false);
   }
 
+
+  // 악보에서 마지막으로 어떤 줄이든 음이 들어간 열(컬럼) 찾기
+function getLastUsedCol() {
+  let last = -1;
+  for (let i = 0; i < 6; i++) {
+    for (let j = tab[i].length - 1; j >= 0; j--) {
+      if (tab[i][j] !== "") { last = Math.max(last, j); break; }
+    }
+  }
+  return last;
+}
+
+// 필요한 열까지 테이블 길이 늘리기
+async function ensureRoom(col) {
+  if (col + 1 >= tab[0].length) {
+    tab = tab.map(row => [...row, "", ""]);
+    await tick();
+    if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
+  }
+}
+
+
+
+
   async function handleFretClick(stringIndex, fretIndex) {
     if (stringIndex === 6) return;
     saveHistory();
 
-    const col = findNextAvailableCol(0, 2);
-
-    if (col + 1 >= tab[0].length) {
-      tab = tab.map(row => [...row, "", ""]);
-      await tick();
-      if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
-    }
+    const last = getLastUsedCol();
+    const col  = (last === -1) ? 0 : last + 2;
+    await ensureRoom(col);
 
     const stringNote = get(tuningNotes)[stringIndex];
     const note = getNoteFromString(stringNote, fretIndex);
@@ -415,32 +443,10 @@ function handleDragStart(i, j) {
     return tab.some(row => row.some(cell => cell !== ""));
   }
 
-  function startEditTop() {
-    editingTimeTop = true;
-    timeTopInput = timeSignature.split('/')[0];
-  }
+  
 
-  function applyTimeSignature() {
-    if (!/^\d+$/.test(timeTopInput)) return;
-    if (!["2", "4", "8", "16"].includes(timeBottomInput)) return;
-    timeSignature = `${timeTopInput}/${timeBottomInput}`;
-    editingTimeTop = false;
-  }
 
-  function onTimeTopKeydown(e) {
-    if (e.key === "Enter") {
-      if (timeTopInput === "") return;
-      applyTimeSignature();
-    } else if (e.key === "Escape") {
-      editingTimeTop = false;
-    }
-  }
-
-  function onTimeBottomChange(e) {
-    timeBottomInput = e.target.value;
-    applyTimeSignature();
-  }
-
+  
   function saveTab() {
     if (!saveName) {
       alert("저장할 이름을 입력하세요!");
@@ -458,7 +464,8 @@ function handleDragStart(i, j) {
       tuning,
       selectedTuning,
       selectedGuitar,
-      timeSignature
+      timeSignature,
+      bpm
     };
     localStorage.setItem(`tab_${saveName}`, JSON.stringify(tabData));
     loadSavedTabs();
@@ -466,7 +473,8 @@ function handleDragStart(i, j) {
     saveName = "";
   }
 
-  function loadSavedTabs() {
+
+function loadSavedTabs() {
     savedTabs = [];
     for (let key in localStorage) {
       if (key.startsWith("tab_")) {
@@ -485,11 +493,13 @@ function handleDragStart(i, j) {
       tuning = data.tuning;
       selectedTuning = data.selectedTuning;
       selectedGuitar = data.selectedGuitar;
-      timeSignature = data.timeSignature;
+      if (typeof data.timeSignature === 'string') timeSignature = data.timeSignature;
+      if (typeof data.bpm === 'number') bpm = data.bpm;
       currentTabPos = getLastActiveColumn() + 2;
     }
     showSavedTabs = false;
     selectedTabs = [];
+    buildInstruments(selectedGuitar);
   }
 
   function toggleTabSelection(name) {
@@ -515,6 +525,9 @@ function handleDragStart(i, j) {
     selectedTabs = [];
     alert("삭제 완료!");
   }
+
+
+
 
   function isLowerString(i) {
     return i >= 3;
@@ -558,22 +571,24 @@ function toggleChordBox() {
   showChordBox = !showChordBox;
 }
 
-function applyChord(chordName) {
+async function applyChord(chordName) {
   const chord = chords[chordName];
   if (!chord) return;
 
   saveHistory();
 
-  const col = findNextAvailableCol(0, 2);
-  if (col + 1 >= tab[0].length) {
-    tab = tab.map(row => [...row, "", ""]);
-  }
+    // 항상 마지막 음 '뒤 + 2칸'에 기록 (한 칸 비우기)
+  const last = getLastUsedCol();
+  const col  = (last === -1) ? 0 : last  + 2;
+  await ensureRoom(col);
 
   // 각 줄에 프렛 번호 입력
-  for (let i = 0; i < 6; i++) {
-    const fret = chord.frets[i];
-    tab[i][col] = fret === "x" ? "" : fret.toString();
-  }
+  // ✅ 표준 TAB(위=1번줄) 모양으로 보이게: 화면행(위→아래) i를 데이터행(6→1)로 뒤집어 기록
+for (let vis = 0; vis < 6; vis++) {
+  const dataIndex = 5 - vis;             // 0(위)=1번줄 → 데이터 5, 5(아래)=6번줄 → 데이터 0
+  const fret = chord.frets[5 - vis]; // ← frets를 거꾸로 읽기
+  tab[dataIndex][col] = fret === "x" ? "" : fret.toString();
+}
 
   // 동시에 코드 소리 재생
   playChord(chordName);
@@ -587,23 +602,21 @@ function applyChord(chordName) {
 // 코드 클릭 시 호출: 악보에 입력 + 소리 재생
 
 // 코드 구성음을 동시에 재생
-function playChord(chordName, duration = 0.6) {
+function playChord(chordName, duration) {
   const chord = chords[chordName];
-  if (!chord) return;
+   if (!chord || !polySynth || isMuted) return;
+ const now = Tone.now();
 
-  Tone.start();
-  const now = Tone.now();
-  const synth = new Tone.PolySynth().toDestination();
 
-  chord.frets.forEach((fret, stringIndex) => {
-    if (fret === "x") return;
-
-    const stringNote = get(tuningNotes)[stringIndex];
-    const note = getNoteFromString(stringNote, fret);
-    if (!isMuted) {
-      synth.triggerAttackRelease(note, duration, now);
-    }
-  });
+  const d = (duration ?? (getBeatMs() / 1000));
+  for (let visIndex = 0; visIndex < 6; visIndex++) {
+   const fret = chord.frets[5 - visIndex]; // ← frets를 거꾸로 읽기
+   if (fret === "x") continue;
+   const dataIndex   = 5 - visIndex;
+   const stringNote  = get(tuningNotes)[dataIndex];
+   const note        = getNoteFromString(stringNote, fret);
+   polySynth.triggerAttackRelease(note, d, now);
+ }
 }
 
 
@@ -611,7 +624,352 @@ function playChord(chordName, duration = 0.6) {
 
 
 
+
+
+
+
+function downloadFile(filename, content, mime = "application/octet-stream") {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
+  }
+
+  // JSON 스키마로 저장 (복원용)
+  function serializeTabToJson() {
+    return JSON.stringify(
+      {
+        version: 1,
+        tab,
+        tuningNotes: get(tuningNotes),
+        tuning,
+        selectedTuning,
+        selectedGuitar,
+        timeSignature,
+        bpm
+      },
+      null,
+      2
+    );
+  }
+
+  // JSON 로드 시 검증 + 반영
+  function deserializeTabFromJson(jsonText) {
+    const data = JSON.parse(jsonText);
+    if (!data || !Array.isArray(data.tab) || data.tab.length !== 6) {
+      throw new Error("올바르지 않은 탭 형식입니다.");
+    }
+    // 간단 검증: 각 행은 배열이어야 함
+    for (const row of data.tab) {
+      if (!Array.isArray(row)) throw new Error("탭 데이터가 손상되었습니다.");
+    }
+
+    saveHistory();
+    tab = data.tab;
+    if (Array.isArray(data.tuningNotes)) tuningNotes.set(data.tuningNotes);
+    if (Array.isArray(data.tuning)) tuning = data.tuning;
+    if (typeof data.selectedTuning === "string") selectedTuning = data.selectedTuning;
+    if (typeof data.selectedGuitar === "string") selectedGuitar = data.selectedGuitar;
+
+    // 커서/스크롤 정리
+    currentTabPos = getLastActiveColumn() + 2;
+    tick().then(() => {
+      if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
+    });
+  }
   
+  function makeSafeName(name) {
+    return (name || "untitled")
+      .replace(/[\\/:*?"<>|]+/g, "_")
+      .slice(0, 50);
+  }
+
+  function exportJSON() {
+  if (!hasAnyNotes()) {
+    alert("악보가 비어 있어요. 먼저 음을 입력하세요!");
+    return;
+  }
+  const base = makeSafeName(saveName) || "tab";
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `${base}_${stamp}.json`;
+  const content = serializeTabToJson();
+  downloadFile(filename, content, "application/json");
+}
+
+  let fileInput;
+
+  async function importJSON(e) {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      deserializeTabFromJson(text);
+      alert(`'${file.name}' 불러오기 완료!`);
+    } catch (err) {
+      console.error(err);
+      alert("불러오기에 실패했습니다. 올바른 .json 파일인지 확인하세요.");
+    } finally {
+      // 같은 파일을 다시 선택해도 change가 뜨도록 입력값 초기화
+      e.target.value = "";
+    }
+
+  }
+let timeSignature = "4/4";
+let bpm = 120;                 // 필요하면 슬라이더로 묶어도 됨
+const COLUMNS_PER_BEAT = 2;    // 한 박을 그리드 2칸으로 표현(네 코드와 동일)
+
+// 분자/분모 세터 (UI에서 호출)
+function setTimeTop(n) {
+  const bot = parseInt(timeSignature.split('/')[1]) || 4;
+  const top = Math.max(1, Math.min(16, parseInt(n) || 4));
+  timeSignature = `${top}/${bot}`;
+}
+function setTimeBottom(den) {
+  const top = parseInt(timeSignature.split('/')[0]) || 4;
+  const allowed = [2,4,8,16];
+  const bot = allowed.includes(+den) ? +den : 4;
+  timeSignature = `${top}/${bot}`;
+}
+
+// 시간 계산(분모가 2/4/8/16일 때 정확)
+function getBeatMs() {
+  const [, bottomStr] = (timeSignature || "4/4").split("/");
+  const bottom = parseInt(bottomStr) || 4;     // 2,4,8,16
+  const quarterMs = 60000 / bpm;               // 4분음표 길이
+  return quarterMs * (4 / bottom);             // 1박 길이
+}
+function getCellMs() {
+  return getBeatMs() / COLUMNS_PER_BEAT;       // 한 칸 길이
+}
+
+let timeTopInput = timeSignature.split('/')[0];
+$: timeTopInput = timeSignature.split('/')[0]; // timeSignature 바뀌면 동기화
+
+
+
+
+
+
+let monoSynth = null;   // 단음(프렛/키보드)
+let polySynth = null;   // 코드(동시 발음)
+let fxNodes = [];       // 이펙트 노드들 (dispose용)
+
+function disposeInstruments() {
+  try { monoSynth?.dispose(); } catch {}
+  try { polySynth?.dispose(); } catch {}
+  monoSynth = null;
+  polySynth = null;
+  fxNodes.forEach(n => { try { n.dispose?.(); } catch {} });
+  fxNodes = [];
+}
+
+let buildingAudio = false;  // ✅ 먼저 선언
+
+// 선택된 타입으로 신스/이펙트 구성
+async function buildInstruments(type = selectedGuitar) {
+  buildingAudio = true;
+  await ensureAudioReady();
+  disposeInstruments();
+try {
+  if (type === 'electric') {
+    // 🎸 Electric: AMSynth + Distortion + Chorus + Reverb
+    const dist   = new Tone.Distortion(0.32);
+   const chorus = new Tone.Chorus({ frequency: 4, delayTime: 2.5, depth: 0.28 });
+   const reverb = new Tone.Reverb({ decay: 1.8, wet: 0.22 });
+   await reverb.ready;   // ✅ 이펙트 준비 대기
+   chorus.start();
+    const vol    = new Tone.Volume(-6).toDestination();
+
+    dist.connect(chorus);
+    chorus.connect(reverb);
+    reverb.connect(vol);
+    fxNodes = [dist, chorus, reverb, vol];
+
+    monoSynth = new Tone.AMSynth({
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.004, decay: 0.12, sustain: 0.4, release: 0.25 }
+    }).connect(dist);
+
+    polySynth = new Tone.PolySynth(Tone.AMSynth, {
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.004, decay: 0.12, sustain: 0.4, release: 0.25 }
+    }).connect(dist);
+
+  } else {
+    // 🎻 Acoustic 느낌: 깨끗한 Synth + Reverb
+    fxNodes = [];
+  monoSynth = new Tone.Synth().toDestination();
+  polySynth = new Tone.PolySynth(Tone.Synth).toDestination();
+  }
+  buildingAudio = false; 
+}
+finally {
+    buildingAudio = false;  // ✅ 무조건 false로 내려감
+  }
+}
+
+async function ensureAudioReady() {
+  try { await Tone.start(); } catch {}
+}
+
+function synthsDead() {
+  return !monoSynth || !polySynth || monoSynth.disposed || polySynth.disposed;
+}
+
+let chordCol = null;                // 코드 입력 중 고정할 컬럼
+const activeNotes = new Map();      // key(숫자) -> note 문자열
+let lastFretIndex = 0;
+
+
+window.addEventListener("keydown", async (e) => {
+  if (hoveredFretIndex == null) return;
+
+  const n = parseInt(e.key, 10);
+  if (!(n >= 1 && n <= 6)) return;
+
+  // 이미 처리한 키는 무시 (키 반복 방지)
+  if (pressedKeys.has(n)) return;
+  pressedKeys.add(n);
+
+  const stringIndex = 6 - n; // 기존 매핑 유지
+  const stringNote  = get(tuningNotes)[stringIndex];
+  const note        = getNoteFromString(stringNote, hoveredFretIndex);
+  if (!note) return;
+
+  // ⚙️ 탭 길이 보장
+  const ensureRoom = async (col) => {
+    if (col + 1 >= tab[0].length) {
+      tab = tab.map(row => [...row, "", ""]);
+      await tick();
+      if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
+    }
+  };
+
+  // ✅ Shift가 눌린 동안: 폴리싱스(동시발음) + 같은 컬럼에 기록
+  if (isShiftDown) {
+    await ensureAudioReady();
+    if (synthsDead()) await buildInstruments(selectedGuitar);
+
+    // 첫 키면 코드 컬럼 고정
+    if (chordCol == null) {
+      chordCol = findNextAvailableCol(0, COLUMNS_PER_BEAT);
+      await ensureRoom(chordCol);
+      saveHistory();
+    }
+
+    // 소리(동시 발음): Attack만 (Shift 떼거나 키업에서 Release)
+    if (!isMuted && polySynth) {
+      try { polySynth.triggerAttack(note); } catch {}
+    }
+    activeNotes.set(n, note);
+
+    // 같은 컬럼에 표기 (프렛번호는 1부터라 기존대로 +1)
+    tab[stringIndex][chordCol] = (hoveredFretIndex + 1).toString();
+    return;
+  }
+
+  // 👉 Shift가 아니면: 기존 단음(모노) 로직 유지
+  saveHistory();
+
+  const last = getLastUsedCol();
+  const col  = (last === -1) ? 0 : last + 2;
+  await ensureRoom(col);
+
+  if (!isMuted) {
+    // 기존 단음 재생: 이전 음 즉시 릴리즈하는 play() 그대로 활용
+    play(note);
+  }
+  tab[stringIndex][col] = (hoveredFretIndex + 1).toString();
+});
+
+// 🔁 숫자키(1~6) 업: 폴리 모드면 해당 음 Release, 상태 정리
+window.addEventListener("keydown", async (e) => {
+  const n = parseInt(e.key, 10);
+  if (!(n >= 1 && n <= 6)) return;
+
+  // 프렛 결정: 호버 중이면 그 프렛, 아니면 마지막 프렛, 최후엔 0프렛
+  const fret = (hoveredFretIndex ?? lastFretIndex ?? 0);
+
+  // 키 반복 방지
+  if (pressedKeys.has(n)) return;
+  pressedKeys.add(n);
+
+  const stringIndex = 6 - n; // 1=1번줄(high E) … 6=6번줄(low E) (기존 매핑)
+  const stringNote  = get(tuningNotes)[stringIndex];
+  const note        = getNoteFromString(stringNote, fret);
+  if (!note) return;
+
+  // 탭 길이 보장 함수
+  const ensureRoom = async (col) => {
+    if (col + 1 >= tab[0].length) {
+      tab = tab.map(row => [...row, "", ""]);
+      await tick();
+      tabContainer && (tabContainer.scrollLeft = tabContainer.scrollWidth);
+    }
+  };
+
+  // ✅ Shift: 폴리(동시발음) + 같은 칼럼에 기록
+  if (isShiftDown) {
+    await ensureAudioReady();
+    if (synthsDead()) await buildInstruments(selectedGuitar);
+
+    if (chordCol == null) {
+      const last = getLastUsedCol();
+      chordCol   = (last === -1) ? 0 : last + 2;
+      await ensureRoom(chordCol);
+      saveHistory();
+    }
+    if (!isMuted && polySynth) {
+      try { polySynth.triggerAttack(note); } catch {}
+    }
+    activeNotes.set(n, note);
+
+    tab[stringIndex][chordCol] = (fret + 1).toString(); // 표기는 1부터
+    return;
+  }
+
+  // 👉 Shift 아님: 기존 단음 입력
+  saveHistory();
+  const col = findNextAvailableCol(0, COLUMNS_PER_BEAT);
+  await ensureRoom(col);
+  if (!isMuted) play(note);
+  tab[stringIndex][col] = (fret + 1).toString();
+});
+
+// 🔁 키 업: 폴리 모드에서 개별/전체 릴리즈 처리
+window.addEventListener("keyup", (e) => {
+  if (e.key === "Shift") {
+    try {
+      for (const note of activeNotes.values()) {
+        try { polySynth?.triggerRelease(note); } catch {}
+      }
+    } finally {
+      activeNotes.clear();
+      chordCol = null;
+    }
+    isShiftDown = false;
+    return;
+  }
+
+  const n = parseInt(e.key, 10);
+  if (pressedKeys.has(n)) pressedKeys.delete(n);
+
+  if (activeNotes.has(n)) {
+    const note = activeNotes.get(n);
+    try { polySynth?.triggerRelease(note); } catch {}
+    activeNotes.delete(n);
+    if (activeNotes.size === 0) chordCol = null;
+  }
+});
+
+
 
 
 
@@ -621,6 +979,22 @@ function playChord(chordName, duration = 0.6) {
 
 
 <style>
+  .title{
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #222; /* 내가 준 테마 변수 사용 중이라면 */
+    background: transparent;
+    border: none;
+    cursor: default;
+    padding: 0;
+  }
+
+  .setting{
+    background-color: #979797;
+    border: 3px solid #979797;
+    color: white;
+    font-weight: bold;
+  }
   .chord-box {
   display: grid;
   grid-template-columns: repeat(3, auto);
@@ -718,75 +1092,89 @@ function playChord(chordName, duration = 0.6) {
   font-weight: bold;
   pointer-events: none;
 }
+
+.top-bar button.selected { background:#666; color:#fff; font-weight:bold; }
 </style>
 
 <div class="container"> 
   <div class="top-bar">
-    <button>guitar site</button>
-    <div>
-      <button on:click={resetTab}>reset</button>
-      <input placeholder="이름" bind:value={saveName} />
-      <button on:click={saveTab}>save</button>
-      <button on:click={toggleSavedTabs}>saved</button>
-      <button on:click={pauseTab} disabled={!$isPlaying}>pause</button>
-      <button on:click={playTab} disabled={$isPlaying || !hasAnyNotes()}>play</button>
-    </div>
-  </div>
+  <div class=title>guitar site</div>
 
-  {#if showSavedTabs}
-    <div class="saved-tabs">
-      <button style="margin-bottom: 8px;" on:click={deleteSelectedTabs}>Delete</button>
-      <div class="saved-grid">
-        {#each savedTabs as name}
-          <div
-            class="saved-item"
-            class:selected={selectedTabs.includes(name)}
-            on:click={() => toggleTabSelection(name)}
-            on:dblclick={() => loadTab(name)}
-          >
-            {name} {selectedTabs.includes(name) ? "✅" : ""}
-          </div>
+  <!-- 버튼들은 로그인 여부와 무관하게 사용 가능 -->
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+
+    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+      
+      <!-- 분자 직접 입력(원하면) -->
+      <input
+        type="number" min="1" max="16"
+        style="width:36px; text-align:center;"
+        bind:value={timeTopInput}
+        on:change={() => setTimeTop(timeTopInput)}
+      />
+      
+      <!-- 분모 고정 버튼: 2/4/8/16 -->
+      <div style="display:flex; gap:4px; align-items:center; margin-left:6px;">
+        <span>/</span>
+        {#each [2,4,8,16] as den}
+          <button on:click={() => setTimeBottom(den)}
+                  class:selected={+timeSignature.split('/')[1]===den}>{den}</button>
         {/each}
       </div>
+    
+      <!-- (선택) BPM 슬라이더 -->
+      <div style="display:flex; gap:6px; align-items:center; margin-left:10px;">
+        <span>BPM</span>
+        <input
+      type="range"
+      min="40"
+      max="240"
+      step="1"
+      bind:value={bpm}
+    />
+    <span style="width:28px; text-align:right;">{bpm}</span>
+  </div>
+</div>
+
+    <button on:click={exportJSON} disabled={!hasAnyNotes()}>export .json</button>
+
+
+    <button on:click={() => fileInput?.click()}>import .json</button>
+<input type="file" accept=".json" bind:this={fileInput} style="display:none" on:change={importJSON} />
+
+    <button on:click={resetTab}>reset</button>
+    <input placeholder="악보이름" bind:value={saveName} />
+    <button on:click={saveTab}>save</button>
+    <button on:click={toggleSavedTabs}>saved</button>
+    <button on:click={pauseTab} disabled={!$isPlaying}>pause</button>
+    <button on:click={playTab} disabled={$isPlaying || !hasAnyNotes() || buildingAudio}>play</button>
+  </div>
+</div>
+
+  {#if showSavedTabs}
+  <div class="saved-tabs">
+    <button style="margin-bottom: 8px;" on:click={deleteSelectedTabs}>Delete</button>
+    <div class="saved-grid">
+      {#each savedTabs as name}
+        <div
+          class="saved-item"
+          class:selected={selectedTabs.includes(name)}
+          on:click={() => toggleTabSelection(name)}
+          on:dblclick={() => loadTab(name)}
+          title="브라우저 로컬 저장"
+        >
+          {name} {selectedTabs.includes(name) ? "✅" : ""}
+        </div>
+      {/each}
     </div>
-  {/if}
+  </div>
+{/if}
 
   <div class="tab-display" bind:this={tabContainer}>
     <table class="tab-table" spellcheck="false">
       <tbody>
         {#each tab as line, i}
           <tr>
-            <td class="time-signature-cell">
-              {#if i === 0}
-                <span class="time-sig-inline">
-                  {#if editingTimeTop}
-                    <input
-                      class="time-top-input"
-                      bind:value={timeTopInput}
-                      on:keydown={onTimeTopKeydown}
-                      on:blur={applyTimeSignature}
-                      maxlength="2"
-                      autofocus
-                    />
-                  {:else}
-                    <span class="time-sig-text" on:click={startEditTop}>{timeTopInput}</span>
-                  {/if}
-                  <span class="time-sig-slash">/</span>
-                  <select
-                    class="time-bottom-select"
-                    bind:value={timeBottomInput}
-                    on:change={onTimeBottomChange}
-                  >
-                    <option value="2">2</option>
-                    <option value="4">4</option>
-                    <option value="8">8</option>
-                    <option value="16">16</option>
-                  </select>
-                </span>
-              {:else}
-                &nbsp;
-              {/if}
-            </td>
             {#each line as fret, j}
               <td
   draggable={true}
@@ -809,11 +1197,11 @@ function playChord(chordName, duration = 0.6) {
       isRightDragging = true;
     }
   }}
-  on:mouseenter={(e) => {
-    if (isRightDragging && e.buttons === 2) {
-      rightDragEnd = { stringIndex: i, colIndex: j };
-    }
-  }}
+  on:mouseenter={() => {
+   if (isRightDragging) {
+     rightDragEnd = { stringIndex: i, colIndex: j };
+   }
+ }}
 >
   {@html formatFret(fret)}
 </td>
@@ -884,6 +1272,7 @@ function playChord(chordName, duration = 0.6) {
       on:mouseenter={() => {
         hoveredFretIndex = fretIndex;
         hoveredFret = stringIndex;
+        lastFretIndex = fretIndex;   // ⬅️ 추가
       }}
       on:mouseleave={() => {
         hoveredFretIndex = null;
