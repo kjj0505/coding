@@ -37,6 +37,17 @@
 
   let sustainExt = []; // { str, start, end }를 저장: 같은 줄(str)에서 start열의 음을 end열까지 유지
 
+  let isComposing = false;
+
+  function toggleMute() {
+  isMuted = !isMuted;
+  if (isMuted) {
+    // 지금 울리는 소리 즉시 끄기
+    try { monoSynth?.triggerRelease(); } catch {}
+    try { polySynth?.releaseAll?.(); } catch {}
+  }
+}
+
   function selectTuningNote(stringIndex, note) {
     const baseOctaves = [2, 2, 3, 3, 4, 4]; // 6번~1번줄
     tuning[stringIndex] = note;
@@ -63,6 +74,14 @@
   // 👉 마우스 업 이벤트 (왼쪽 드래그 해제, 우클릭 드래그 지속음 처리)
   window.addEventListener('mouseup', (e) => {
   if (e.button === 2 && isRightDragging && rightDragStart && rightDragEnd) {
+    if (!isComposing) {
+    rightDragStart = null;
+    rightDragEnd = null;
+    isRightDragging = false;
+    isDragging = false;
+    isSwapping = false;
+    return; // 기록 없이 종료
+  }
     const startRow = rightDragStart.stringIndex;
     const startCol = Math.min(rightDragStart.colIndex, rightDragEnd.colIndex);
     const endCol = Math.max(rightDragStart.colIndex, rightDragEnd.colIndex);
@@ -299,37 +318,50 @@ function handleDragStart(i, j) {
   if (get(isPlaying) || buildingAudio) return;
   const lastCol = getLastActiveColumn();
   if (lastCol === -1) return;
+
   await ensureAudioReady();
   if (synthsDead()) await buildInstruments(selectedGuitar);
+
   isPlaying.set(true);
+  const delayMs = getCellMs();
 
+  try {
+    for (let col = 0; col <= lastCol; col++) {
+      if (!get(isPlaying)) break;
 
-  const delayMs = getCellMs(); // ✅ 분모(2/4/8/16)·BPM 반영
+      // ✅ 이 부분만 교체
+      const notes = [];
+      let sustainCols = 1;
 
-    try {
-      for (let col = 0; col <= lastCol; col++) {
-        if (!get(isPlaying)) break;
+      for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
+        const cell = tab[stringIndex][col];
+        if (cell !== "" && cell !== "~" && !isNaN(cell)) {
+          // 이 줄의 sustain 길이 측정
+          let s = 1, k = col + 1;
+          while (k <= lastCol && tab[stringIndex][k] === "~") { s++; k++; }
+          sustainCols = Math.max(sustainCols, s);
 
-        for (let stringIndex = 0; stringIndex < 6; stringIndex++) {
-          const cell = tab[stringIndex][col];
-          if (cell !== "" && cell !== "~" && !isNaN(cell)) {
-            let sustain = 1;
-            let lookahead = col + 1;
-            while (lookahead <= lastCol && tab[stringIndex][lookahead] === "~") {
-              sustain++;
-              lookahead++;
-            }
-            const stringNote = get(tuningNotes)[stringIndex];
-            const note = getNoteFromString(stringNote, parseInt(cell));
-            play(note, (sustain * delayMs) / 1000);
-          }
+          const base = get(tuningNotes)[stringIndex];
+          const note = getNoteFromString(base, parseInt(cell, 10));
+          if (note) notes.push(note);
         }
-        await new Promise(res => setTimeout(res, delayMs));
       }
-    } finally {
-      isPlaying.set(false);
+
+      if (notes.length === 1) {
+        // 단음은 기존 mono 경로 유지
+        play(notes[0], (sustainCols * delayMs) / 1000);
+      } else if (notes.length > 1) {
+        // 코드면 한 번에 ‘동시에’
+        const durSec = (sustainCols * delayMs) / 1000;
+        try { polySynth?.triggerAttackRelease(notes, durSec, Tone.now(), 0.85); } catch {}
+      }
+
+      await new Promise(r => setTimeout(r, delayMs));
     }
+  } finally {
+    isPlaying.set(false);
   }
+}
 
 
 
@@ -362,18 +394,24 @@ async function ensureRoom(col) {
 
 
   async function handleFretClick(stringIndex, fretIndex) {
-    if (stringIndex === 6) return;
-    saveHistory();
+  if (stringIndex === 6) return;
 
-    const last = getLastUsedCol();
-    const col  = (last === -1) ? 0 : last + 2;
-    await ensureRoom(col);
+  const stringNote = get(tuningNotes)[stringIndex];
+  const note = getNoteFromString(stringNote, fretIndex);
+  play(note); // 🔊 소리는 항상 낸다
 
-    const stringNote = get(tuningNotes)[stringIndex];
-    const note = getNoteFromString(stringNote, fretIndex);
-    play(note);
-    tab[stringIndex][col] = (fretIndex + 1).toString();
-  }
+  // 🎼 compose OFF면 기록하지 않고 종료
+  if (!isComposing) return;
+
+  // ⬇️ compose ON일 때만 기록 로직 수행
+  saveHistory();
+
+  const last = getLastUsedCol();
+  const col  = (last === -1) ? 0 : last + 2;
+  await ensureRoom(col);
+
+  tab[stringIndex][col] = (fretIndex + 1).toString();
+}
 
   function deleteCell(stringIndex, colIndex) {
   saveHistory();
@@ -575,24 +613,27 @@ async function applyChord(chordName) {
   const chord = chords[chordName];
   if (!chord) return;
 
+  // 🎼 compose OFF면 기록 없이 소리만
+  if (!isComposing) {
+    playChord(chordName);
+    return;
+  }
+
   saveHistory();
 
-    // 항상 마지막 음 '뒤 + 2칸'에 기록 (한 칸 비우기)
   const last = getLastUsedCol();
   const col  = (last === -1) ? 0 : last  + 2;
   await ensureRoom(col);
 
-  // 각 줄에 프렛 번호 입력
-  // ✅ 표준 TAB(위=1번줄) 모양으로 보이게: 화면행(위→아래) i를 데이터행(6→1)로 뒤집어 기록
-for (let vis = 0; vis < 6; vis++) {
-  const dataIndex = 5 - vis;             // 0(위)=1번줄 → 데이터 5, 5(아래)=6번줄 → 데이터 0
-  const fret = chord.frets[5 - vis]; // ← frets를 거꾸로 읽기
-  tab[dataIndex][col] = fret === "x" ? "" : fret.toString();
-}
+  // 위(1번줄)→아래(6번줄) 보이도록 뒤집어 기록
+  for (let vis = 0; vis < 6; vis++) {
+    const dataIndex = 5 - vis;
+    const fret = chord.frets[5 - vis];
+    tab[dataIndex][col] = fret === "x" ? "" : fret.toString();
+  }
 
-  // 동시에 코드 소리 재생
+  // 소리는 그대로
   playChord(chordName);
-
 }
 
 
@@ -828,119 +869,53 @@ const activeNotes = new Map();      // key(숫자) -> note 문자열
 let lastFretIndex = 0;
 
 
-window.addEventListener("keydown", async (e) => {
-  if (hoveredFretIndex == null) return;
-
-  const n = parseInt(e.key, 10);
-  if (!(n >= 1 && n <= 6)) return;
-
-  // 이미 처리한 키는 무시 (키 반복 방지)
-  if (pressedKeys.has(n)) return;
-  pressedKeys.add(n);
-
-  const stringIndex = 6 - n; // 기존 매핑 유지
-  const stringNote  = get(tuningNotes)[stringIndex];
-  const note        = getNoteFromString(stringNote, hoveredFretIndex);
-  if (!note) return;
-
-  // ⚙️ 탭 길이 보장
-  const ensureRoom = async (col) => {
-    if (col + 1 >= tab[0].length) {
-      tab = tab.map(row => [...row, "", ""]);
-      await tick();
-      if (tabContainer) tabContainer.scrollLeft = tabContainer.scrollWidth;
-    }
-  };
-
-  // ✅ Shift가 눌린 동안: 폴리싱스(동시발음) + 같은 컬럼에 기록
-  if (isShiftDown) {
-    await ensureAudioReady();
-    if (synthsDead()) await buildInstruments(selectedGuitar);
-
-    // 첫 키면 코드 컬럼 고정
-    if (chordCol == null) {
-      chordCol = findNextAvailableCol(0, COLUMNS_PER_BEAT);
-      await ensureRoom(chordCol);
-      saveHistory();
-    }
-
-    // 소리(동시 발음): Attack만 (Shift 떼거나 키업에서 Release)
-    if (!isMuted && polySynth) {
-      try { polySynth.triggerAttack(note); } catch {}
-    }
-    activeNotes.set(n, note);
-
-    // 같은 컬럼에 표기 (프렛번호는 1부터라 기존대로 +1)
-    tab[stringIndex][chordCol] = (hoveredFretIndex + 1).toString();
-    return;
-  }
-
-  // 👉 Shift가 아니면: 기존 단음(모노) 로직 유지
-  saveHistory();
-
-  const last = getLastUsedCol();
-  const col  = (last === -1) ? 0 : last + 2;
-  await ensureRoom(col);
-
-  if (!isMuted) {
-    // 기존 단음 재생: 이전 음 즉시 릴리즈하는 play() 그대로 활용
-    play(note);
-  }
-  tab[stringIndex][col] = (hoveredFretIndex + 1).toString();
-});
 
 // 🔁 숫자키(1~6) 업: 폴리 모드면 해당 음 Release, 상태 정리
 window.addEventListener("keydown", async (e) => {
   const n = parseInt(e.key, 10);
   if (!(n >= 1 && n <= 6)) return;
 
-  // 프렛 결정: 호버 중이면 그 프렛, 아니면 마지막 프렛, 최후엔 0프렛
-  const fret = (hoveredFretIndex ?? lastFretIndex ?? 0);
-
   // 키 반복 방지
+  if (e.repeat) return;
   if (pressedKeys.has(n)) return;
   pressedKeys.add(n);
 
-  const stringIndex = 6 - n; // 1=1번줄(high E) … 6=6번줄(low E) (기존 매핑)
+  const fret = (hoveredFretIndex ?? lastFretIndex ?? 0);
+  const stringIndex = 6 - n;
   const stringNote  = get(tuningNotes)[stringIndex];
   const note        = getNoteFromString(stringNote, fret);
   if (!note) return;
 
-  // 탭 길이 보장 함수
-  const ensureRoom = async (col) => {
-    if (col + 1 >= tab[0].length) {
-      tab = tab.map(row => [...row, "", ""]);
-      await tick();
-      tabContainer && (tabContainer.scrollLeft = tabContainer.scrollWidth);
-    }
-  };
-
-  // ✅ Shift: 폴리(동시발음) + 같은 칼럼에 기록
+  // Shift 누른 상태: 폴리(동시발음) — keyup에서 release
   if (isShiftDown) {
     await ensureAudioReady();
     if (synthsDead()) await buildInstruments(selectedGuitar);
-
-    if (chordCol == null) {
-      const last = getLastUsedCol();
-      chordCol   = (last === -1) ? 0 : last + 2;
-      await ensureRoom(chordCol);
-      saveHistory();
-    }
     if (!isMuted && polySynth) {
       try { polySynth.triggerAttack(note); } catch {}
     }
     activeNotes.set(n, note);
 
-    tab[stringIndex][chordCol] = (fret + 1).toString(); // 표기는 1부터
+    // compose ON이면 같은 column에 기록
+    if (isComposing) {
+      if (chordCol == null) {
+        chordCol = findNextAvailableCol(0, COLUMNS_PER_BEAT);
+        await ensureRoom(chordCol);
+        saveHistory();
+      }
+      tab[stringIndex][chordCol] = (fret + 1).toString();
+    }
     return;
   }
 
-  // 👉 Shift 아님: 기존 단음 입력
-  saveHistory();
-  const col = findNextAvailableCol(0, COLUMNS_PER_BEAT);
-  await ensureRoom(col);
-  if (!isMuted) play(note);
-  tab[stringIndex][col] = (fret + 1).toString();
+  // Shift가 아니면: 마우스 클릭과 동일하게 mono로 한 번만 발음
+  if (!isMuted) play(note);  // ← 마우스와 동일 경로
+
+  if (isComposing) {
+    saveHistory();
+    const col = findNextAvailableCol(0, COLUMNS_PER_BEAT);
+    await ensureRoom(col);
+    tab[stringIndex][col] = (fret + 1).toString();
+  }
 });
 
 // 🔁 키 업: 폴리 모드에서 개별/전체 릴리즈 처리
@@ -980,20 +955,48 @@ window.addEventListener("keyup", (e) => {
 
 <style>
   .title{
-    font-size: 1.2rem;
-    font-weight: bold;
-    color: #222; /* 내가 준 테마 변수 사용 중이라면 */
+    font-size: 18px;
+    font-weight: 800;
+    color: #222;
     background: transparent;
     border: none;
+    padding: 0 8px 0 0;
     cursor: default;
-    padding: 0;
+    line-height: 1;
+  }
+
+  .beat{
+    position: relative;
+    padding-left: 10px;
+  }
+
+  .beat::before{
+    content: "박자표 (time signature)";
+    position: absolute;
+    top: -50%;
+    font-size: 12px; font-weight: 700; color: #334;
+    margin-right: 6px;
+  }
+
+  .bpm{
+    position: relative;
+    padding-left: 10px;
+  }
+
+  .bpm::before{
+    content: "템포 (BPM)";
+    position: absolute;
+    top: -50%;
+    font-size: 12px; font-weight: 700; color: #334;
   }
 
   .setting{
     background-color: #979797;
-    border: 3px solid #979797;
-    color: white;
+    border: 3px solid #484848;
+    color: black;
     font-weight: bold;
+    margin-top: 10px;
+    margin-bottom: 10px;
   }
   .chord-box {
   display: grid;
@@ -1018,12 +1021,14 @@ window.addEventListener("keyup", (e) => {
   background: #ccc;
 }
   .container { height: 100%; width: 100%; display: flex; flex-direction: column; background: white; margin: 0; padding: 0; font-family: sans-serif; }
-  .top-bar { display: flex; justify-content: space-between; padding: 1rem; }
+  .top-bar { display:flex; justify-content:space-between; align-items:center;
+  gap:12px; padding:10px 12px; background:#fff; border-bottom:1px solid #e6e9f2;}
   .tab-display { background: #ccc; padding: 1rem; font-family: 'Courier New', monospace; font-size: 14px; overflow-x: auto; overflow-y: hidden; white-space: pre; box-sizing: border-box; max-width: 100%; }
   .controls { display: flex; gap: 0.5rem; padding: 0.5rem 1rem; align-items: center; }
   .fretboard-wrapper { flex: 1; display: flex; overflow: auto; align-items: stretch; }
   .string-labels { display: flex; flex-direction: column; justify-content: center; gap: 24px; }
   .string-label { background: red; color: white; padding: 0.1rem 0.4rem; border-radius: 4px; text-align: center; font-weight: bold; margin-right: 5px; }
+  .string-label:hover{cursor: pointer;}
   .tunerset { display: flex; }
   .tunerset > button { margin: 8px; }
   .tunerset > button.selected { background: #666; color: white; font-weight: bold; }
@@ -1094,6 +1099,56 @@ window.addEventListener("keyup", (e) => {
 }
 
 .top-bar button.selected { background:#666; color:#fff; font-weight:bold; }
+
+
+
+
+
+/* 숫자 input/분모 버튼/슬라이더 정리 */
+.top-bar input[type="number"]{
+  width: 44px; height: 28px;
+  text-align: center;
+  border: 1px solid #bfc9e8;
+  border-radius: 8px;
+  background: #fff;
+}
+.beat > span{ opacity: .8; font-weight: 700; }
+.beat button{
+  background:#f5f7fb; border:1px solid #d7def1; color:#223;
+  border-radius:10px; padding:6px 10px;
+}
+.beat button.selected{
+  background:#364fc7; border-color:#364fc7; color:#fff;
+}
+.bpm input[type="range"]{ height: 4px; }
+
+
+
+button {
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  border: 1px solid #dfe4ee;
+  background: linear-gradient(180deg, #ffffff, #f7f9fc);
+  color: #243046;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 12px;
+  padding: 8px 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;            /* 아이콘과 텍스트 간격 */
+  cursor: pointer;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.9) inset,
+    0 1px 2px rgba(15, 23, 42, 0.04);
+  transition:
+  background .15s ease,
+  border-color .15s ease,
+  box-shadow .15s ease,
+    transform .04s ease;
+}
+
 </style>
 
 <div class="container"> 
@@ -1114,7 +1169,7 @@ window.addEventListener("keyup", (e) => {
       />
       
       <!-- 분모 고정 버튼: 2/4/8/16 -->
-      <div style="display:flex; gap:4px; align-items:center; margin-left:6px;">
+      <div class="beat" style="display:flex; gap:4px; align-items:center; margin-left:6px;">
         <span>/</span>
         {#each [2,4,8,16] as den}
           <button on:click={() => setTimeBottom(den)}
@@ -1123,7 +1178,7 @@ window.addEventListener("keyup", (e) => {
       </div>
     
       <!-- (선택) BPM 슬라이더 -->
-      <div style="display:flex; gap:6px; align-items:center; margin-left:10px;">
+      <div class="bpm" style="display:flex; gap:6px; align-items:center; margin-left:10px;">
         <span>BPM</span>
         <input
       type="range"
@@ -1136,12 +1191,14 @@ window.addEventListener("keyup", (e) => {
   </div>
 </div>
 
-    <button on:click={exportJSON} disabled={!hasAnyNotes()}>export .json</button>
+    <button on:click={exportJSON} disabled={!hasAnyNotes()}>export file</button>
 
 
-    <button on:click={() => fileInput?.click()}>import .json</button>
+    <button on:click={() => fileInput?.click()}>import file</button>
 <input type="file" accept=".json" bind:this={fileInput} style="display:none" on:change={importJSON} />
-
+    <button on:click={() => isComposing = !isComposing} class:selected={isComposing}>
+  {isComposing ? 'compose: ON' : 'compose: OFF'}
+</button>
     <button on:click={resetTab}>reset</button>
     <input placeholder="악보이름" bind:value={saveName} />
     <button on:click={saveTab}>save</button>
@@ -1304,9 +1361,9 @@ window.addEventListener("keyup", (e) => {
       {/if}
     </div>
     <div>
-      <button style="border-radius: 50%;" on:click={() => isMuted = !isMuted}>
-        {#if isMuted} 🔇 {:else} 🔊 {/if}
-      </button>
+      <button style="border-radius: 50%;" on:click={toggleMute}>
+  {#if isMuted} 🔇 {:else} 🔊 {/if}
+</button>
     </div>
   </div>
 </div>
